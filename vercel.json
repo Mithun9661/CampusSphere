@@ -1,6 +1,10 @@
 {
   "rewrites": [
     {
+      "source": "/ecap-meta",
+      "destination": "/api/ecap-meta"
+    },
+    {
       "source": "/api/:path*",
       "destination": "/api/gateway?path=:path*"
     },

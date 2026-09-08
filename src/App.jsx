@@ -5,6 +5,7 @@ import { AppProvider } from './context/AppContext';
 import { ProtectedRoute } from './routes/ProtectedRoute';
 import DashboardLayout from './layouts/DashboardLayout';
 import LoginPage from './pages/auth/LoginPage';
+import RegisterPage from './pages/auth/RegisterPage';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import LoadingScreen from './components/shared/LoadingScreen';
 
@@ -39,6 +40,7 @@ function AppContent() {
     <Routes>
       {/* Public */}
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
       <Route path="/" element={<Navigate to="/login" replace />} />
 
       {/* Student routes */}

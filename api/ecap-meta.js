@@ -1,4 +1,4 @@
-const ECAP_ENTRY_URL = 'https://info.aec.edu.in/ACET/StudentMaster.aspx';
+const ECAP_ENTRY_URL = 'https://examsection.acet.ac.in/';
 const MAX_REDIRECTS = 8;
 
 function decodeHtml(value = '') {
@@ -79,7 +79,7 @@ function inspectForm(html) {
 
 function scriptSnippets(html) {
   const scripts = [...html.matchAll(/<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
-  const needles = ['hdnDPToken', 'imgBtn2', 'txtId2', 'txtPwd2', 'hdnpwd2', 'encryptJSText', 'setValue', 'WebForm_DoPostBackWithOptions'];
+  const needles = ['login', 'student', 'password', 'username', 'roll', 'captcha', 'WebForm_DoPostBackWithOptions', '__doPostBack'];
   const snippets = [];
   for (const code of scripts) {
     const flat = code.replace(/\s+/g, ' ').trim();
@@ -88,8 +88,7 @@ function scriptSnippets(html) {
       while (true) {
         const index = flat.toLowerCase().indexOf(needle.toLowerCase(), from);
         if (index < 0) break;
-        const snippet = flat.slice(Math.max(0, index - 220), Math.min(flat.length, index + 420));
-        snippets.push({ needle, snippet });
+        snippets.push({ needle, snippet: flat.slice(Math.max(0, index - 220), Math.min(flat.length, index + 420)) });
         from = index + needle.length;
         if (snippets.length >= 40) return snippets;
       }
@@ -111,10 +110,13 @@ function inspectScripts(html, baseUrl) {
 
 function inferCredentialFields(forms) {
   const allInputs = forms.flatMap((form) => form.inputs || []);
-  const studentUser = allInputs.find((input) => input.id === 'txtId2' || input.name === 'txtId2') || null;
-  const studentPassword = allInputs.find((input) => input.id === 'txtPwd2' || input.name === 'txtPwd2') || null;
-  const studentSubmit = allInputs.find((input) => input.id === 'imgBtn2' || input.name === 'imgBtn2') || null;
-  return { studentUser, studentPassword, studentSubmit };
+  const password = allInputs.find((input) => input.type === 'password') || null;
+  const user = allInputs.find((input) => {
+    const key = `${input.name || ''} ${input.id || ''} ${input.context || ''}`.toLowerCase();
+    return input.type !== 'hidden' && /student|user|login|roll|hall|htno|reg|email|id/.test(key);
+  }) || null;
+  const submit = allInputs.find((input) => ['submit', 'button', 'image'].includes(input.type)) || null;
+  return { user, password, submit };
 }
 
 function getSetCookieHeaders(headers) {
@@ -148,7 +150,8 @@ async function fetchWithCookieRedirects(startUrl) {
   for (let i = 0; i <= MAX_REDIRECTS; i += 1) {
     const headers = {
       Accept: 'text/html,application/xhtml+xml',
-      'User-Agent': 'Mozilla/5.0 Student-360/1.0',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
     };
     const cookies = cookieHeader(jar);
     if (cookies) headers.Cookie = cookies;

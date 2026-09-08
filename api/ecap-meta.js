@@ -1,4 +1,4 @@
-const ECAP_LOGIN_URL = 'https://info.aec.edu.in/ACET/StudentMaster.aspx';
+const ECAP_ENTRY_URL = 'https://info.aec.edu.in/ACET/StudentMaster.aspx';
 
 function decodeHtml(value = '') {
   return value
@@ -25,6 +25,9 @@ function inspectForm(html) {
     const openTag = form.match(/<form\b[^>]*>/i)?.[0] || '';
     const formAttrs = parseAttributes(openTag);
     const inputs = [...form.matchAll(/<input\b[^>]*>/gi)].map((m) => parseAttributes(m[0]));
+    const selects = [...form.matchAll(/<select\b[^>]*>/gi)].map((m) => parseAttributes(m[0]));
+    const buttons = [...form.matchAll(/<(?:button)\b[^>]*>/gi)].map((m) => parseAttributes(m[0]));
+
     return {
       index,
       id: formAttrs.id || null,
@@ -36,8 +39,22 @@ function inspectForm(html) {
         id: attrs.id || null,
         type: (attrs.type || 'text').toLowerCase(),
       })).filter((item) => item.name || item.id),
+      selects: selects.map((attrs) => ({ name: attrs.name || null, id: attrs.id || null })),
+      buttons: buttons.map((attrs) => ({ name: attrs.name || null, id: attrs.id || null, type: attrs.type || null })),
     };
   });
+}
+
+function inferCredentialFields(forms) {
+  const allInputs = forms.flatMap((form) => form.inputs || []);
+  const password = allInputs.find((input) => input.type === 'password') || null;
+  const likelyUser = allInputs.find((input) => {
+    const key = `${input.name || ''} ${input.id || ''}`.toLowerCase();
+    return input.type !== 'hidden' && /user|login|roll|hall|htno|admission|regno|email/.test(key);
+  }) || null;
+  const submit = allInputs.find((input) => ['submit', 'button', 'image'].includes(input.type)) || null;
+
+  return { user: likelyUser, password, submit };
 }
 
 export default async function handler(req, res) {
@@ -47,8 +64,8 @@ export default async function handler(req, res) {
   }
 
   try {
-    const response = await fetch(ECAP_LOGIN_URL, {
-      redirect: 'manual',
+    const response = await fetch(ECAP_ENTRY_URL, {
+      redirect: 'follow',
       headers: {
         Accept: 'text/html,application/xhtml+xml',
         'User-Agent': 'Mozilla/5.0 Student-360/1.0',
@@ -58,12 +75,14 @@ export default async function handler(req, res) {
     const html = await response.text();
     const forms = inspectForm(html);
 
+    res.setHeader('Cache-Control', 'no-store');
     return res.status(200).json({
-      ok: response.ok || (response.status >= 300 && response.status < 400),
+      ok: response.ok,
       status: response.status,
-      location: response.headers.get('location'),
-      source: ECAP_LOGIN_URL,
+      source: ECAP_ENTRY_URL,
+      finalUrl: response.url,
       forms,
+      inferred: inferCredentialFields(forms),
     });
   } catch (error) {
     console.error('E-CAP metadata discovery failed:', error);

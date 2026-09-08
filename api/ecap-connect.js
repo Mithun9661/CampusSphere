@@ -1,10 +1,5 @@
-import crypto from 'node:crypto';
-
-const ECAP_ENTRY_URL = 'https://info.aec.edu.in/ACET/StudentMaster.aspx';
-const ECAP_LOGIN_URL = 'https://info.aec.edu.in/acet/default.aspx';
-const ECAP_PROFILE_URL = 'https://info.aec.edu.in/acet/Academics/StudentProfile.aspx?scrid=17';
+const ECAP_LOGIN_URL = 'https://examsection.acet.ac.in/Login.aspx?ReturnUrl=%2F';
 const MAX_REDIRECTS = 8;
-const AES_KEY = '8701661282118308';
 
 function decodeHtml(value = '') {
   return String(value)
@@ -31,9 +26,7 @@ function parseAttributes(tag) {
   const attrs = {};
   const re = /([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/g;
   let match;
-  while ((match = re.exec(tag))) {
-    attrs[match[1].toLowerCase()] = decodeHtml(match[2] ?? match[3] ?? match[4] ?? '');
-  }
+  while ((match = re.exec(tag))) attrs[match[1].toLowerCase()] = decodeHtml(match[2] ?? match[3] ?? match[4] ?? '');
   return attrs;
 }
 
@@ -50,8 +43,7 @@ function updateCookieJar(jar, headers) {
     if (eq <= 0) continue;
     const name = pair.slice(0, eq).trim();
     const value = pair.slice(eq + 1).trim();
-    if (value) jar.set(name, value);
-    else jar.delete(name);
+    if (value) jar.set(name, value); else jar.delete(name);
   }
 }
 
@@ -102,128 +94,42 @@ function extractHiddenInputs(html) {
   return hidden;
 }
 
-function encryptPassword(password) {
-  const key = Buffer.from(AES_KEY, 'utf8');
-  const cipher = crypto.createCipheriv('aes-128-cbc', key, key);
-  return Buffer.concat([cipher.update(String(password), 'utf8'), cipher.final()]).toString('base64');
+function buildForm(hidden, values) {
+  const form = new URLSearchParams();
+  Object.entries(hidden).forEach(([key, value]) => form.set(key, value));
+  Object.entries(values).forEach(([key, value]) => form.set(key, value));
+  return form.toString();
 }
 
 function portalFailureReason(html) {
   const plain = text(html).toLowerCase();
-  if (/invalid[^.]{0,40}(password|user|login|credential)|wrong[^.]{0,30}(password|user)/i.test(plain)) return 'invalid_credentials';
-  if (/locked|blocked|disabled/i.test(plain)) return 'account_locked';
-  if (/captcha|verification code/i.test(plain)) return 'verification_required';
-  if (/user name|password/i.test(plain)) return 'login_form_returned';
+  if (/invalid|incorrect|wrong|not valid|does not exist/.test(plain) && /user|password|login|credential|id/.test(plain)) return 'invalid_credentials';
+  if (/locked|blocked|disabled/.test(plain)) return 'account_locked';
+  if (/captcha|verification code|otp/.test(plain)) return 'verification_required';
+  if (/student login/.test(plain) && /password/.test(plain)) return 'login_form_returned';
   return 'login_not_accepted';
 }
 
-function parseRows(html) {
-  const rows = [];
-  for (const rowMatch of html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
-    const cells = [];
-    for (const cellMatch of rowMatch[1].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)) cells.push(text(cellMatch[1]));
-    if (cells.length) rows.push(cells);
+function discoverAcademicLinks(html, baseUrl) {
+  const links = [];
+  const seen = new Set();
+  for (const match of html.matchAll(/<a\b[^>]*>[\s\S]*?<\/a>/gi)) {
+    const open = match[0].match(/<a\b[^>]*>/i)?.[0] || '';
+    const attrs = parseAttributes(open);
+    const label = text(match[0]);
+    const href = attrs.href || '';
+    if (!href || /^javascript:/i.test(href)) continue;
+    let url;
+    try { url = new URL(href, baseUrl); } catch { continue; }
+    if (url.hostname !== 'examsection.acet.ac.in') continue;
+    const haystack = `${label} ${url.pathname} ${url.search}`.toLowerCase();
+    if (!/(result|marks|grade|semester|academic|student|profile|memo|sgpa|cgpa|attendance)/.test(haystack)) continue;
+    const key = `${label}|${url.pathname}${url.search}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    links.push({ label: label.slice(0, 80), path: `${url.pathname}${url.search}` });
   }
-  return rows;
-}
-
-function asNumber(value) {
-  const cleaned = String(value ?? '').replace(/,/g, '').trim();
-  if (!cleaned || !/^-?\d+(?:\.\d+)?$/.test(cleaned)) return null;
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : null;
-}
-
-function findLabelValue(rows, label) {
-  const target = label.toLowerCase();
-  for (const row of rows) {
-    for (let i = 0; i < row.length; i += 1) {
-      if (row[i].trim().toLowerCase() === target) {
-        const candidates = row.slice(i + 1).filter((v) => v && v !== ':');
-        if (candidates.length) return candidates[0];
-      }
-    }
-  }
-  return '';
-}
-
-function parseCurrentAttendance(rows) {
-  const items = [];
-  let total = null;
-  for (const row of rows) {
-    if (row.length >= 5 && /^\d+$/.test(row[0]) && row[1]) {
-      const held = asNumber(row[2]);
-      const attended = asNumber(row[3]);
-      const percentage = asNumber(row[4]);
-      if (held !== null && attended !== null && percentage !== null) items.push({ subject: row[1], held, attended, percentage });
-    }
-    if (row[0]?.toUpperCase() === 'TOTAL' && row.length >= 4) {
-      const held = asNumber(row[row.length - 3]);
-      const attended = asNumber(row[row.length - 2]);
-      const percentage = asNumber(row[row.length - 1]);
-      if (held !== null && attended !== null && percentage !== null) total = { held, attended, percentage };
-    }
-  }
-  return { items, total };
-}
-
-function parseSemesterResults(html) {
-  const stopAt = html.search(/PREVIOUS\s+SEMESTERS\s+ATTENDANCE/i);
-  const source = stopAt >= 0 ? html.slice(0, stopAt) : html;
-  const semesters = [];
-  const re = /<span\b[^>]*class\s*=\s*["'][^"']*reportHeading2[^"']*["'][^>]*>([\s\S]*?Semester[\s\S]*?)<\/span>\s*<table\b[^>]*>([\s\S]*?)<\/table>/gi;
-
-  for (const match of source.matchAll(re)) {
-    const label = text(match[1]);
-    const rows = parseRows(match[2]);
-    const header = rows.find((row) => row.some((cell) => cell.toUpperCase() === 'SGPA'));
-    const gradeRow = rows.find((row) => row[0]?.toLowerCase() === 'grade');
-    const creditRow = rows.find((row) => row[0]?.toLowerCase() === 'credits');
-    if (!header || !gradeRow || !creditRow || header.length < 3) continue;
-
-    const subjects = [];
-    for (let i = 1; i < header.length - 1; i += 1) {
-      if (!header[i]) continue;
-      subjects.push({ subject: header[i], grade: gradeRow[i] || '', credits: asNumber(creditRow[i]) });
-    }
-
-    semesters.push({
-      semester: label,
-      sgpa: asNumber(gradeRow[gradeRow.length - 1]),
-      credits: creditRow[creditRow.length - 1] || '',
-      subjects,
-    });
-  }
-  return semesters;
-}
-
-function parseAcademicProfile(html, expectedRollNo) {
-  const rows = parseRows(html);
-  const attendance = parseCurrentAttendance(rows);
-  const semesters = parseSemesterResults(html);
-  const plain = text(html);
-  const cgpaMatch = plain.match(/CGPA\s*:\s*([0-9.]+)\s+Credits\s*:\s*([0-9.]+\s*\/\s*[0-9.]+)\s+([0-9.]+)\s*%/i);
-  const rollNo = findLabelValue(rows, 'RollNo');
-
-  if (expectedRollNo && rollNo && rollNo.toUpperCase() !== expectedRollNo.toUpperCase()) {
-    throw new Error('E-CAP account does not match the signed-in Student-360 account');
-  }
-
-  return {
-    profile: {
-      rollNo,
-      name: findLabelValue(rows, 'Name'),
-      course: findLabelValue(rows, 'Course'),
-      branch: findLabelValue(rows, 'Branch'),
-      semester: findLabelValue(rows, 'Semester'),
-    },
-    cgpa: cgpaMatch ? asNumber(cgpaMatch[1]) : null,
-    earnedCredits: cgpaMatch ? cgpaMatch[2].replace(/\s+/g, '') : '',
-    percentage: cgpaMatch ? asNumber(cgpaMatch[3]) : null,
-    semesters,
-    attendance,
-    currentSubjects: attendance.items.map((item) => item.subject),
-  };
+  return links.slice(0, 20);
 }
 
 export default async function handler(req, res) {
@@ -241,60 +147,77 @@ export default async function handler(req, res) {
 
   try {
     const jar = new Map();
-    const loginPage = await requestWithSession(ECAP_ENTRY_URL, jar);
-    const hidden = extractHiddenInputs(loginPage.html);
-    const encrypted = encryptPassword(password);
 
-    const form = new URLSearchParams();
-    Object.entries(hidden).forEach(([key, value]) => form.set(key, value));
-    form.set('txtId1', '');
-    form.set('txtPwd1', '');
-    form.set('txtId2', rollNo);
-    form.set('txtPwd2', encrypted);
-    form.set('txtId3', '');
-    form.set('txtPwd3', '');
-    form.set('TextBox1', '');
-    form.set('hdnpwd1', '');
-    form.set('hdnpwd2', encrypted);
-    form.set('hdnpwd3', '');
-    form.set('imgBtn2.x', '58');
-    form.set('imgBtn2.y', '31');
+    // Step 1: open portal login page.
+    const landing = await requestWithSession(ECAP_LOGIN_URL, jar);
 
-    const loginResult = await requestWithSession(ECAP_LOGIN_URL, jar, {
+    // Step 2: switch the ASP.NET login page to Student Login.
+    const studentModeBody = buildForm(extractHiddenInputs(landing.html), {
+      __EVENTTARGET: 'lnkStudent',
+      __EVENTARGUMENT: '',
+    });
+    const studentPage = await requestWithSession(ECAP_LOGIN_URL, jar, {
       method: 'POST',
-      body: form.toString(),
+      body: studentModeBody,
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        Origin: 'https://info.aec.edu.in',
-        Referer: loginPage.url,
+        Origin: 'https://examsection.acet.ac.in',
+        Referer: landing.url,
       },
     });
 
-    if (/\btxtPwd2\b/i.test(loginResult.html) && /default\.aspx/i.test(loginResult.url)) {
+    if (!/\btxtUserId\b/i.test(studentPage.html) || !/\btxtPwd\b/i.test(studentPage.html)) {
+      console.warn('Exam section student form unavailable', { stage: 'student_form' });
+      return res.status(502).json({ error: 'Could not open the ACET Student Login form.', stage: 'student_form' });
+    }
+
+    // Step 3: submit the exact student form. Password is only kept in memory for this request.
+    const loginBody = buildForm(extractHiddenInputs(studentPage.html), {
+      __EVENTTARGET: '',
+      __EVENTARGUMENT: '',
+      txtUserId: rollNo,
+      txtPwd: password,
+      btnLogin: 'Login',
+    });
+    const loginResult = await requestWithSession(ECAP_LOGIN_URL, jar, {
+      method: 'POST',
+      body: loginBody,
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        Origin: 'https://examsection.acet.ac.in',
+        Referer: studentPage.url,
+      },
+    });
+
+    const stillLogin = /\btxtUserId\b/i.test(loginResult.html) && /\btxtPwd\b/i.test(loginResult.html);
+    if (stillLogin) {
       const reason = portalFailureReason(loginResult.html);
-      console.warn('E-CAP login not accepted', { stage: 'login', reason });
+      console.warn('Exam section login not accepted', { stage: 'login', reason });
       return res.status(401).json({
         error: reason === 'account_locked'
-          ? 'E-CAP account appears locked/blocked. Please verify on the official E-CAP portal.'
+          ? 'Exam Section account appears locked/blocked.'
           : reason === 'verification_required'
-            ? 'E-CAP is asking for additional verification. Open the official portal once and complete it.'
-            : 'E-CAP did not accept this login. Please verify the same roll number/password on the official E-CAP portal.',
+            ? 'Exam Section is asking for additional verification.'
+            : 'Exam Section did not accept this UserID/password.',
         stage: 'login',
         reason,
       });
     }
 
-    const profileResult = await requestWithSession(ECAP_PROFILE_URL, jar, { headers: { Referer: loginResult.url } });
+    const links = discoverAcademicLinks(loginResult.html, loginResult.url);
+    console.info('Exam section login accepted', {
+      stage: 'authenticated',
+      finalPath: new URL(loginResult.url).pathname,
+      academicLinks: links,
+    });
 
-    if (/default\.aspx/i.test(profileResult.url) || !/PERFORMANCE|BIO-DATA|ATTENDANCE/i.test(profileResult.html)) {
-      console.warn('E-CAP profile access not accepted', { stage: 'profile' });
-      return res.status(401).json({ error: 'E-CAP login completed but the student profile could not be opened.', stage: 'profile' });
-    }
-
-    const academic = parseAcademicProfile(profileResult.html, rollNo);
-    return res.status(200).json({ success: true, academic, syncedAt: new Date().toISOString() });
+    return res.status(409).json({
+      error: 'Exam Section login succeeded. Student 360 is mapping the authenticated academic pages now.',
+      stage: 'authenticated',
+      reason: 'academic_route_discovery',
+    });
   } catch (error) {
-    console.error('E-CAP academic sync failed:', error?.message || error);
-    return res.status(502).json({ error: error?.message || 'Unable to sync E-CAP academic data' });
+    console.error('Exam section sync failed:', error?.message || error);
+    return res.status(502).json({ error: 'Unable to connect to the ACET Exam Section portal.' });
   }
 }

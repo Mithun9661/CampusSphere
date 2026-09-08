@@ -119,7 +119,7 @@ function parseRows(html) {
 
 function num(value) {
   const cleaned = String(value ?? '').replace(/,/g, '').replace(/%/g, '').trim();
-  if (!cleaned || !/^-?\d+(?:\.\d+)?$/.test(cleaned)) return null;
+  if (!cleaned || !/^-?(?:\d+(?:\.\d+)?|\.\d+)$/.test(cleaned)) return null;
   const n = Number(cleaned);
   return Number.isFinite(n) ? n : null;
 }
@@ -137,56 +137,56 @@ function findLabelValue(rows, label) {
   return '';
 }
 
+function presentPerformanceHtml(html) {
+  const raw = String(html || '');
+  const start = raw.search(/PERFORMANCE\s*\(\s*Present\s*\)/i);
+  if (start < 0) return raw;
+  const tail = raw.slice(start);
+  const end = tail.search(/PERFORMANCE\s*\(\s*Past\s*\)/i);
+  return end > 0 ? tail.slice(0, end) : tail;
+}
+
 function parseAttendance(html) {
-  const rows = parseRows(html);
+  const rows = parseRows(presentPerformanceHtml(html));
   const items = [];
   let total = null;
 
   for (const row of rows) {
-    const normalized = row.map((v) => String(v || '').trim());
-    const first = normalized[0]?.toUpperCase();
+    const cells = row.map((value) => String(value || '').trim());
+    const first = (cells[0] || '').toUpperCase().replace(/\s+/g, ' ');
 
     if (first === 'TOTAL' || first === 'TOTAL :') {
-      const numbers = normalized.map(num).filter((v) => v !== null);
-      if (numbers.length >= 3) {
-        const [held, attended, percentage] = numbers.slice(-3);
-        if (held >= 0 && attended >= 0 && percentage >= 0 && percentage <= 100) total = { held, attended, percentage };
+      const values = cells.map(num).filter((value) => value !== null);
+      if (values.length >= 3) {
+        const [held, attended, percentage] = values.slice(-3);
+        if (held >= 0 && attended >= 0 && attended <= held && percentage >= 0 && percentage <= 100) {
+          total = { held, attended, percentage };
+        }
       }
       continue;
     }
 
-    const pctIndex = normalized.findIndex((cell) => {
-      const value = num(cell);
-      return value !== null && value >= 0 && value <= 100 && /%/.test(cell);
-    });
+    if (!/^\d+$/.test(cells[0] || '') || cells.length < 5) continue;
+    const subject = cells[1] || '';
+    const held = num(cells[2]);
+    const attended = num(cells[3]);
+    const percentage = num(cells[4]);
 
-    let subject = '';
-    let held = null;
-    let attended = null;
-    let percentage = null;
+    if (!subject || held === null || attended === null || percentage === null) continue;
+    if (held < 0 || attended < 0 || attended > held || percentage < 0 || percentage > 100) continue;
 
-    if (/^\d+$/.test(normalized[0] || '') && normalized.length >= 5) {
-      subject = normalized[1] || '';
-      held = num(normalized[2]);
-      attended = num(normalized[3]);
-      percentage = num(normalized[4]);
-    } else if (pctIndex >= 2) {
-      percentage = num(normalized[pctIndex]);
-      attended = num(normalized[pctIndex - 1]);
-      held = num(normalized[pctIndex - 2]);
-      subject = normalized.slice(0, pctIndex - 2).filter(Boolean).join(' ').replace(/^\d+\s*/, '');
-    }
-
-    if (subject && held !== null && attended !== null && percentage !== null && held >= attended && percentage >= 0 && percentage <= 100) {
-      const key = `${subject.toUpperCase()}|${held}|${attended}|${percentage}`;
-      if (!items.some((x) => x._key === key)) items.push({ _key: key, subject, held, attended, percentage });
-    }
+    const key = `${subject.toUpperCase()}|${held}|${attended}|${percentage}`;
+    if (!items.some((item) => item._key === key)) items.push({ _key: key, subject, held, attended, percentage });
   }
 
   if (!total && items.length) {
     const held = items.reduce((sum, item) => sum + item.held, 0);
     const attended = items.reduce((sum, item) => sum + item.attended, 0);
-    total = { held, attended, percentage: held ? Number(((attended / held) * 100).toFixed(2)) : 0 };
+    total = {
+      held,
+      attended,
+      percentage: held ? Number(((attended / held) * 100).toFixed(2)) : 0,
+    };
   }
 
   return { items: items.map(({ _key, ...item }) => item), total };
@@ -201,6 +201,10 @@ function loginFailure(html) {
   if (/invalid|incorrect|wrong|not valid/.test(plain) && /password|user|login|id/.test(plain)) return 'invalid_credentials';
   if (/locked|blocked|disabled/.test(plain)) return 'account_locked';
   return 'login_not_accepted';
+}
+
+function hasAttendance(attendance) {
+  return Boolean(attendance?.total || attendance?.items?.length);
 }
 
 export default async function handler(req, res) {
@@ -267,8 +271,11 @@ export default async function handler(req, res) {
       return res.status(401).json({ error: 'E-CAP session expired before attendance could be opened.', stage: 'attendance' });
     }
 
-    const attendance = parseAttendance(attendancePage.html);
+    let attendance = parseAttendance(attendancePage.html);
     let profile = { rollNo };
+    let profileAttendance = { items: [], total: null };
+    let profileHasPresentSection = false;
+
     try {
       const profilePage = await requestWithSession(ECAP_PROFILE_URL, jar, { headers: { Referer: attendancePage.url } });
       const rows = parseRows(profilePage.html);
@@ -279,7 +286,12 @@ export default async function handler(req, res) {
         branch: findLabelValue(rows, 'Branch'),
         semester: findLabelValue(rows, 'Semester'),
       };
-    } catch {}
+      profileHasPresentSection = /PERFORMANCE\s*\(\s*Present\s*\)/i.test(profilePage.html);
+      profileAttendance = parseAttendance(profilePage.html);
+      if (!hasAttendance(attendance) && hasAttendance(profileAttendance)) attendance = profileAttendance;
+    } catch (error) {
+      console.warn('Legacy E-CAP profile fallback unavailable', { message: error?.message || String(error) });
+    }
 
     if (profile.rollNo && profile.rollNo.toUpperCase() !== rollNo) {
       return res.status(403).json({ error: 'E-CAP account does not match your Student 360 roll number.' });
@@ -287,9 +299,19 @@ export default async function handler(req, res) {
 
     console.info('Legacy E-CAP attendance sync', {
       stage: 'attendance',
+      source: hasAttendance(parseAttendance(attendancePage.html)) ? 'attendance_page' : hasAttendance(profileAttendance) ? 'profile_report' : 'none',
       subjectCount: attendance.items.length,
       totalAvailable: Boolean(attendance.total),
+      profileHasPresentSection,
     });
+
+    if (!hasAttendance(attendance)) {
+      return res.status(422).json({
+        error: 'E-CAP login succeeded, but attendance data was not present in the pages returned by the portal.',
+        stage: 'attendance_parse',
+        reason: 'attendance_not_exposed',
+      });
+    }
 
     return res.status(200).json({
       success: true,

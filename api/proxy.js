@@ -16,22 +16,10 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing path parameter' });
   }
 
-  // The original Maya coding-profile endpoints were removed. The legacy Profile
-  // component can still call them while the live wrapper is mounted, so stop those
-  // calls here instead of forwarding them upstream and generating repeated 404s.
-  const removedCodingEndpoints = new Set([
-    'get-leetcode-details-by-rollno',
-    'get-geeksforgeeks-details-by-rollno',
-    'get-codechef-details-by-rollno',
-    'get-hackerrank-details-by-rollno',
-  ]);
-  if (removedCodingEndpoints.has(targetPath)) {
-    return res.status(200).json({});
-  }
-
-  // Fetch the four public coding profiles through our server-side aggregator.
-  if (targetPath === 'coding-profiles') {
-    return handleCodingProfiles(req, res);
+  // Aggregate coding platform profile stats through a server-side request so the
+  // browser does not depend on third-party CORS behavior.
+  if (targetPath === 'coding-stats') {
+    return handleCodingStats(req, res);
   }
 
   // Handle result submission locally
@@ -147,75 +135,54 @@ async function handleResultSubmission(req, res, targetPath) {
   }
 }
 
+
 /**
- * Fetch public coding-platform statistics for linked student profiles.
- * Supported query params: leetcode, gfg, codechef, hackerrank.
+ * Fetch public coding-platform statistics for connected usernames.
+ * Uses one aggregation service so LeetCode, GFG, CodeChef and HackerRank
+ * have a consistent response shape and failures stay isolated per profile.
  */
-async function handleCodingProfiles(req, res) {
-  if (req.method !== 'GET') {
-    res.setHeader('Allow', 'GET');
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
-
-  const supported = ['leetcode', 'gfg', 'codechef', 'hackerrank'];
-  const params = new URLSearchParams();
-  const requested = {};
-
-  for (const platform of supported) {
-    const rawValue = Array.isArray(req.query?.[platform]) ? req.query[platform][0] : req.query?.[platform];
-    const username = String(rawValue || '').trim().replace(/^@/, '');
-    if (!username) continue;
-    if (!/^[A-Za-z0-9_.-]{1,64}$/.test(username)) {
-      return res.status(400).json({ error: `Invalid ${platform} username` });
-    }
-    requested[platform] = username;
-    params.set(platform, username);
-  }
-
-  if (Object.keys(requested).length === 0) {
-    return res.status(400).json({ error: 'At least one coding profile username is required' });
-  }
-
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 18000);
-
+async function handleCodingStats(req, res) {
   try {
-    const upstreamUrl = `https://coding-profile-service.onrender.com/stats?${params.toString()}`;
-    const response = await fetch(upstreamUrl, {
-      method: 'GET',
-      headers: {
-        Accept: 'application/json',
-        'User-Agent': 'Student-360/1.0',
-      },
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      const text = await response.text().catch(() => '');
-      console.error('Coding profile provider error:', response.status, text.slice(0, 300));
-      return res.status(502).json({ error: 'Coding profile provider is temporarily unavailable' });
+    const allowed = ['leetcode', 'gfg', 'codechef', 'hackerrank'];
+    const params = new URLSearchParams();
+    for (const key of allowed) {
+      const raw = req.query?.[key];
+      const value = Array.isArray(raw) ? raw[0] : raw;
+      if (value && /^[a-zA-Z0-9_.@-]{1,80}$/.test(value)) params.set(key, value);
     }
 
-    const data = await response.json();
-    const profiles = Array.isArray(data?.profiles) ? data.profiles : [];
-    const filteredProfiles = profiles.filter((profile) => {
+    if ([...params.keys()].length === 0) {
+      return res.status(400).json({ error: 'At least one coding profile username is required' });
+    }
+
+    const upstream = await fetch(`https://coding-profile-service.onrender.com/stats?${params.toString()}`, {
+      headers: { 'Accept': 'application/json', 'User-Agent': 'Student-360/1.0' }
+    });
+
+    if (!upstream.ok) {
+      return res.status(502).json({ error: 'Coding profile provider unavailable', status: upstream.status });
+    }
+
+    const payload = await upstream.json();
+    const profiles = Array.isArray(payload?.profiles) ? payload.profiles : [];
+    const result = {};
+
+    for (const profile of profiles) {
       const platform = String(profile?.platform || '').toLowerCase();
-      return supported.includes(platform) && requested[platform];
-    });
-
-    res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=1800');
-    return res.status(200).json({
-      success: true,
-      profiles: filteredProfiles,
-      requested: Object.keys(requested),
-    });
-  } catch (error) {
-    if (error?.name === 'AbortError') {
-      return res.status(504).json({ error: 'Coding profile provider timed out' });
+      if (platform === 'geeksforgeeks') result.gfg = profile;
+      else if (allowed.includes(platform)) result[platform] = profile;
     }
-    console.error('Coding profile fetch failed:', error);
-    return res.status(502).json({ error: 'Failed to fetch coding profile stats' });
-  } finally {
-    clearTimeout(timeout);
+
+    // Some deployments return keyed objects instead of a profiles array.
+    for (const key of allowed) {
+      if (!result[key] && payload?.[key] && typeof payload[key] === 'object') result[key] = payload[key];
+    }
+    if (!result.gfg && payload?.geeksforgeeks) result.gfg = payload.geeksforgeeks;
+
+    res.setHeader('Cache-Control', 's-maxage=900, stale-while-revalidate=3600');
+    return res.status(200).json(result);
+  } catch (error) {
+    console.error('Coding stats proxy error:', error);
+    return res.status(500).json({ error: 'Failed to fetch coding profile stats' });
   }
 }

@@ -61,6 +61,9 @@ function inspectForm(html) {
             title: attrs.title || null,
             alt: attrs.alt || null,
             onclick: attrs.onclick || null,
+            onkeyup: attrs.onkeyup || null,
+            onblur: attrs.onblur || null,
+            tabindex: attrs.tabindex || null,
             context: marker ? controlContext(form, marker) : null,
           } : {}),
         };
@@ -69,6 +72,22 @@ function inspectForm(html) {
       buttons: buttons.map((attrs) => ({ name: attrs.name || null, id: attrs.id || null, type: attrs.type || null, onclick: attrs.onclick || null })),
     };
   });
+}
+
+function inspectScripts(html, baseUrl) {
+  const external = [...html.matchAll(/<script\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*>/gi)]
+    .map((m) => m[1] || m[2])
+    .filter(Boolean)
+    .map((src) => {
+      try { return new URL(decodeHtml(src), baseUrl).toString(); } catch { return decodeHtml(src); }
+    });
+
+  const inline = [...html.matchAll(/<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script>/gi)]
+    .map((m) => m[1])
+    .filter((code) => /encryptJSText|setValue|hdnpwd|hdnDPToken/i.test(code))
+    .map((code) => code.replace(/\s+/g, ' ').trim().slice(0, 3000));
+
+  return { external, relevantInline: inline };
 }
 
 function inferCredentialFields(forms) {
@@ -154,6 +173,7 @@ export default async function handler(req, res) {
       finalUrl,
       hops,
       forms,
+      scripts: inspectScripts(html, finalUrl),
       inferred: inferCredentialFields(forms),
     });
   } catch (error) {

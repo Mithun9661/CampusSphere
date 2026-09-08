@@ -1,44 +1,53 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Helper functions
     function isSignedIn() {
       return request.auth != null;
     }
-    
-    function isAdmin() {
-      return isSignedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
-    }
-    
+
     function isOwner(userId) {
       return isSignedIn() && request.auth.uid == userId;
     }
 
-    // User profiles
+    function isAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin() || isOwner(userId);
+      allow read: if isAdmin() || isOwner(userId);
+      allow create: if isOwner(userId) && request.resource.data.role == 'student';
+      allow update: if isAdmin() || (
+        isOwner(userId)
+        && request.resource.data.role == resource.data.role
+      );
+      allow delete: if isAdmin() || isOwner(userId);
     }
 
-    // Students collection
     match /students/{studentId} {
-      allow read: if isSignedIn();
-      allow write: if isAdmin() || (isSignedIn() && request.auth.token.email.matches('(?i)^' + studentId + '@.*'));
+      allow read: if isAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update, delete: if isAdmin() || (
+        isSignedIn()
+        && resource.data.uid == request.auth.uid
+        && request.resource.data.uid == request.auth.uid
+      );
     }
 
-    // Exams collection
     match /exams/{examId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();
     }
 
-    // Results collection
     match /results/{resultId} {
-      allow read: if isAdmin() || isOwner(resource.data.studentId);
+      allow read: if isAdmin() || (
+        isSignedIn()
+        && (resource.data.studentId == request.auth.uid || resource.data.uid == request.auth.uid)
+      );
       allow write: if isAdmin();
     }
 
-    // Notifications
     match /notifications/{notifId} {
       allow read: if isSignedIn();
       allow write: if isAdmin();

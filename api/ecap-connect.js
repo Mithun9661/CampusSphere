@@ -19,6 +19,8 @@ function decodeHtml(value = '') {
 
 function text(value = '') {
   return decodeHtml(String(value)
+    .replace(/<script\b[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, ' ')
     .replace(/<br\s*\/?\s*>/gi, ' ')
     .replace(/<[^>]+>/g, ' '))
     .replace(/\s+/g, ' ')
@@ -65,7 +67,8 @@ async function requestWithSession(url, jar, options = {}) {
   for (let i = 0; i <= MAX_REDIRECTS; i += 1) {
     const headers = {
       Accept: 'text/html,application/xhtml+xml',
-      'User-Agent': 'Mozilla/5.0 Student-360/1.0',
+      'Accept-Language': 'en-US,en;q=0.9',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.0.0 Safari/537.36',
       ...(options.headers || {}),
     };
     const cookies = cookieHeader(jar);
@@ -80,7 +83,6 @@ async function requestWithSession(url, jar, options = {}) {
       if ([301, 302, 303].includes(response.status) && method !== 'GET') {
         method = 'GET';
         body = undefined;
-        delete headers['Content-Type'];
       }
       continue;
     }
@@ -95,9 +97,7 @@ function extractHiddenInputs(html) {
   const hidden = {};
   for (const match of html.matchAll(/<input\b[^>]*>/gi)) {
     const attrs = parseAttributes(match[0]);
-    if ((attrs.type || '').toLowerCase() === 'hidden' && attrs.name) {
-      hidden[attrs.name] = attrs.value || '';
-    }
+    if ((attrs.type || '').toLowerCase() === 'hidden' && attrs.name) hidden[attrs.name] = attrs.value || '';
   }
   return hidden;
 }
@@ -108,13 +108,20 @@ function encryptPassword(password) {
   return Buffer.concat([cipher.update(String(password), 'utf8'), cipher.final()]).toString('base64');
 }
 
+function portalFailureReason(html) {
+  const plain = text(html).toLowerCase();
+  if (/invalid[^.]{0,40}(password|user|login|credential)|wrong[^.]{0,30}(password|user)/i.test(plain)) return 'invalid_credentials';
+  if (/locked|blocked|disabled/i.test(plain)) return 'account_locked';
+  if (/captcha|verification code/i.test(plain)) return 'verification_required';
+  if (/user name|password/i.test(plain)) return 'login_form_returned';
+  return 'login_not_accepted';
+}
+
 function parseRows(html) {
   const rows = [];
   for (const rowMatch of html.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/gi)) {
     const cells = [];
-    for (const cellMatch of rowMatch[1].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)) {
-      cells.push(text(cellMatch[1]));
-    }
+    for (const cellMatch of rowMatch[1].matchAll(/<t[dh]\b[^>]*>([\s\S]*?)<\/t[dh]>/gi)) cells.push(text(cellMatch[1]));
     if (cells.length) rows.push(cells);
   }
   return rows;
@@ -148,9 +155,7 @@ function parseCurrentAttendance(rows) {
       const held = asNumber(row[2]);
       const attended = asNumber(row[3]);
       const percentage = asNumber(row[4]);
-      if (held !== null && attended !== null && percentage !== null) {
-        items.push({ subject: row[1], held, attended, percentage });
-      }
+      if (held !== null && attended !== null && percentage !== null) items.push({ subject: row[1], held, attended, percentage });
     }
     if (row[0]?.toUpperCase() === 'TOTAL' && row.length >= 4) {
       const held = asNumber(row[row.length - 3]);
@@ -179,11 +184,7 @@ function parseSemesterResults(html) {
     const subjects = [];
     for (let i = 1; i < header.length - 1; i += 1) {
       if (!header[i]) continue;
-      subjects.push({
-        subject: header[i],
-        grade: gradeRow[i] || '',
-        credits: asNumber(creditRow[i]),
-      });
+      subjects.push({ subject: header[i], grade: gradeRow[i] || '', credits: asNumber(creditRow[i]) });
     }
 
     semesters.push({
@@ -202,8 +203,8 @@ function parseAcademicProfile(html, expectedRollNo) {
   const semesters = parseSemesterResults(html);
   const plain = text(html);
   const cgpaMatch = plain.match(/CGPA\s*:\s*([0-9.]+)\s+Credits\s*:\s*([0-9.]+\s*\/\s*[0-9.]+)\s+([0-9.]+)\s*%/i);
-
   const rollNo = findLabelValue(rows, 'RollNo');
+
   if (expectedRollNo && rollNo && rollNo.toUpperCase() !== expectedRollNo.toUpperCase()) {
     throw new Error('E-CAP account does not match the signed-in Student-360 account');
   }
@@ -248,7 +249,7 @@ export default async function handler(req, res) {
     Object.entries(hidden).forEach(([key, value]) => form.set(key, value));
     form.set('txtId1', '');
     form.set('txtPwd1', '');
-    form.set('txtId2', rollNo.toLowerCase());
+    form.set('txtId2', rollNo);
     form.set('txtPwd2', encrypted);
     form.set('txtId3', '');
     form.set('txtPwd3', '');
@@ -256,8 +257,8 @@ export default async function handler(req, res) {
     form.set('hdnpwd1', '');
     form.set('hdnpwd2', encrypted);
     form.set('hdnpwd3', '');
-    form.set('imgBtn2.x', '1');
-    form.set('imgBtn2.y', '1');
+    form.set('imgBtn2.x', '58');
+    form.set('imgBtn2.y', '31');
 
     const loginResult = await requestWithSession(ECAP_LOGIN_URL, jar, {
       method: 'POST',
@@ -270,15 +271,24 @@ export default async function handler(req, res) {
     });
 
     if (/\btxtPwd2\b/i.test(loginResult.html) && /default\.aspx/i.test(loginResult.url)) {
-      return res.status(401).json({ error: 'E-CAP login failed. Check your roll number/password.' });
+      const reason = portalFailureReason(loginResult.html);
+      console.warn('E-CAP login not accepted', { stage: 'login', reason });
+      return res.status(401).json({
+        error: reason === 'account_locked'
+          ? 'E-CAP account appears locked/blocked. Please verify on the official E-CAP portal.'
+          : reason === 'verification_required'
+            ? 'E-CAP is asking for additional verification. Open the official portal once and complete it.'
+            : 'E-CAP did not accept this login. Please verify the same roll number/password on the official E-CAP portal.',
+        stage: 'login',
+        reason,
+      });
     }
 
-    const profileResult = await requestWithSession(ECAP_PROFILE_URL, jar, {
-      headers: { Referer: loginResult.url },
-    });
+    const profileResult = await requestWithSession(ECAP_PROFILE_URL, jar, { headers: { Referer: loginResult.url } });
 
     if (/default\.aspx/i.test(profileResult.url) || !/PERFORMANCE|BIO-DATA|ATTENDANCE/i.test(profileResult.html)) {
-      return res.status(401).json({ error: 'E-CAP session could not access the student profile.' });
+      console.warn('E-CAP profile access not accepted', { stage: 'profile' });
+      return res.status(401).json({ error: 'E-CAP login completed but the student profile could not be opened.', stage: 'profile' });
     }
 
     const academic = parseAcademicProfile(profileResult.html, rollNo);

@@ -14,6 +14,7 @@ import StudentDashboard from './pages/student/Dashboard';
 import UpcomingExamsPage from './pages/student/UpcomingExams';
 import ResultsPage from './pages/student/Results';
 import ProfilePage from './pages/student/ProfileLive';
+import AcademicsPage from './pages/student/Academics';
 import GitHubAnalysisPage from './pages/student/GitHubAnalysis';
 import ViolationsPage from './pages/student/Violations';
 import AchievementsPage from './pages/student/Achievements';
@@ -56,6 +57,7 @@ function AppContent() {
         <Route path="dashboard" element={<StudentDashboard />} />
         <Route path="exams" element={<UpcomingExamsPage />} />
         <Route path="results" element={<ResultsPage />} />
+        <Route path="academics" element={<AcademicsPage />} />
         <Route path="profile" element={<ErrorBoundary><ProfilePage /></ErrorBoundary>} />
         <Route path="github" element={<GitHubAnalysisPage />} />
         <Route path="violations" element={<ViolationsPage />} />

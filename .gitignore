@@ -24,5 +24,8 @@ dist-ssr
 *.sw?
 
 # Secrets and Data
+.env
+.env.*
+!.env.example
 scripts/serviceAccountKey.json
 scripts/students.json

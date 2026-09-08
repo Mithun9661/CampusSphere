@@ -1,4 +1,4 @@
-const ECAP_ENTRY_URL = 'https://examsection.acet.ac.in/';
+const ECAP_ENTRY_URL = 'https://examsection.acet.ac.in/Login.aspx?ReturnUrl=%2F';
 const MAX_REDIRECTS = 8;
 
 function decodeHtml(value = '') {

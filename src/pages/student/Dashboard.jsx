@@ -18,13 +18,85 @@ const ChartTip = ({ active, payload, label }) =>
     </div>
   ) : null;
 
+const buildCgpaTrend = (student) => {
+  if (!student) return [];
+
+  const passoutYear = Number(student.passout_year || student.passoutYear);
+  const explicitJoinYear = Number(student.join_year || student.joining_year || student.admission_year || student.admissionYear);
+  const startYear = Number.isFinite(explicitJoinYear) && explicitJoinYear > 2000
+    ? explicitJoinYear
+    : (Number.isFinite(passoutYear) && passoutYear > 2000 ? passoutYear - 4 : null);
+
+  const toCgpa = (value) => {
+    const n = Number(value);
+    return Number.isFinite(n) && n > 0 && n <= 10 ? Number(n.toFixed(2)) : null;
+  };
+
+  const academicLabel = (year) => `${year}-${String(year + 1).slice(-2)}`;
+  const normalizeYear = (value) => {
+    if (typeof value === 'number') return value;
+    const match = String(value || '').match(/20\d{2}/);
+    return match ? Number(match[0]) : null;
+  };
+
+  const rawHistory = student.cgpa_history || student.cgpaHistory || student.yearly_cgpa || student.yearlyCgpa;
+  const history = [];
+
+  if (Array.isArray(rawHistory)) {
+    rawHistory.forEach((item, index) => {
+      if (item && typeof item === 'object') {
+        const year = normalizeYear(item.year || item.academic_year || item.academicYear);
+        const cgpa = toCgpa(item.cgpa ?? item.value ?? item.score);
+        if (year && cgpa) history.push({ year: academicLabel(year), cgpa, sortYear: year });
+      } else if (startYear) {
+        const cgpa = toCgpa(item);
+        if (cgpa) history.push({ year: academicLabel(startYear + index), cgpa, sortYear: startYear + index });
+      }
+    });
+  } else if (rawHistory && typeof rawHistory === 'object') {
+    Object.entries(rawHistory).forEach(([key, value]) => {
+      const year = normalizeYear(key);
+      const cgpa = toCgpa(value);
+      if (year && cgpa) history.push({ year: academicLabel(year), cgpa, sortYear: year });
+    });
+  }
+
+  const semesterValues = student.semester_cgpa || student.semesterCgpa || student.sem_cgpa || student.semCgpa;
+  if (history.length === 0 && Array.isArray(semesterValues) && startYear) {
+    for (let i = 0; i < semesterValues.length; i += 2) {
+      const values = semesterValues.slice(i, i + 2).map(toCgpa).filter(Boolean);
+      if (values.length) {
+        const year = startYear + Math.floor(i / 2);
+        history.push({
+          year: academicLabel(year),
+          cgpa: Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2)),
+          sortYear: year,
+        });
+      }
+    }
+  }
+
+  if (history.length) {
+    return history
+      .filter(item => !startYear || item.sortYear >= startYear)
+      .filter(item => !passoutYear || item.sortYear < passoutYear)
+      .sort((a, b) => a.sortYear - b.sortYear)
+      .map(({ year, cgpa }) => ({ year, cgpa }));
+  }
+
+  const currentCgpa = toCgpa(student.cgpa ?? student.current_cgpa ?? student.currentCgpa ?? student.overall_cgpa ?? student.overallCgpa);
+  if (!currentCgpa || !startYear) return [];
+
+  const nowYear = new Date().getFullYear();
+  const academicYear = Math.min(Math.max(nowYear, startYear), passoutYear ? passoutYear - 1 : nowYear);
+  return [{ year: academicLabel(academicYear), cgpa: currentCgpa }];
+};
+
 const radarData = [
   { subject: 'DSA', score: 88 }, { subject: 'DBMS', score: 78 },
   { subject: 'OS', score: 88 },  { subject: 'CN', score: 87 },
   { subject: 'ML', score: 84 },  { subject: 'WT', score: 91 },
 ];
-
-
 
 export default function StudentDashboard() {
   const { user } = useAuth();
@@ -39,11 +111,6 @@ export default function StudentDashboard() {
   const [retryCount, setRetryCount] = useState(0);
 
   const studentBadges  = [];
-  const performanceData = [
-    { year: '2021', cgpa: 7.8 }, { year: '2022', cgpa: 8.1 },
-    { year: '2023', cgpa: 8.4 }, { year: '2024', cgpa: 8.2 },
-    { year: '2025', cgpa: 8.6 }, { year: '2026', cgpa: 8.8 }
-  ];
 
   useEffect(() => {
     if (!rollNo) return;
@@ -96,7 +163,7 @@ export default function StudentDashboard() {
               console.warn(`⚠️ get-student-id-by-rollno failed:`, idData);
               return null;
             }
-            
+
             const detailsRes = await fetch(`/api/get-user-by-id/${idData.objectId}`, {
               method: 'GET',
               headers: { 'Accept': 'application/json' },
@@ -133,7 +200,6 @@ export default function StudentDashboard() {
             if (docSnap.exists()) {
               finalStudentData = docSnap.data();
             } else {
-              // Create a placeholder if not found in Firestore either
               finalStudentData = {
                 roll_no: rollNo,
                 first_name: user?.name?.split(' ')[0] || 'Student',
@@ -145,10 +211,8 @@ export default function StudentDashboard() {
           } catch (e) { console.error("Firestore error:", e); }
         }
 
-        // Generate deterministic seed based on roll number for consistency in mocks
         const seed = rollNo.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
 
-        // Unified Stats (API -> Mock based on roll number)
         let finalStats = statsJson;
         if (!finalStats) {
           finalStats = {
@@ -161,26 +225,24 @@ export default function StudentDashboard() {
           };
         }
 
-        // Fetch upcoming exams and results from Firestore (Production source)
         const examsSnap = await getDocs(collection(db, 'exams'));
         const examsData = examsSnap.docs
           .map(d => ({ id: d.id, ...d.data() }))
           .filter(e => e.status === 'upcoming' || e.status === 'scheduled')
           .sort((a, b) => new Date(a.date) - new Date(b.date));
-        
+
         setUpcomingExams(examsData.slice(0, 3));
 
         const resultsQuery = query(collection(db, 'results'), where('rollNo', '==', rollNo));
         const resultsSnap = await getDocs(resultsQuery);
-        const userResults = resultsSnap.docs
-          .map(d => d.data());
-        
+        const userResults = resultsSnap.docs.map(d => d.data());
+
         setMyResults(userResults);
-        setCodingProfiles({ 
-          leetcode: lc || { lc_total_progarms: finalStats.total * 0.4, lc_easy: finalStats.easy * 0.4, lc_rank: finalStats.rank }, 
-          gfg: gfg || { gfg_total_problems: finalStats.total * 0.3, gfg_score: finalStats.score * 0.3 }, 
-          codechef: cc || { total_problems: finalStats.total * 0.2, rating: 1400 + (seed % 400) }, 
-          hackerrank: hr || { hr_badges: 3, hr_total_stars: 12 } 
+        setCodingProfiles({
+          leetcode: lc || { lc_total_progarms: finalStats.total * 0.4, lc_easy: finalStats.easy * 0.4, lc_rank: finalStats.rank },
+          gfg: gfg || { gfg_total_problems: finalStats.total * 0.3, gfg_score: finalStats.score * 0.3 },
+          codechef: cc || { total_problems: finalStats.total * 0.2, rating: 1400 + (seed % 400) },
+          hackerrank: hr || { hr_badges: 3, hr_total_stars: 12 }
         });
 
         setStudentData(finalStudentData);
@@ -217,6 +279,9 @@ export default function StudentDashboard() {
   const studentDept = studentData?.branch?.[0] || 'No branch assigned';
   const studentYear = studentData?.passout_year || '';
   const studentRoll = studentData?.roll_no || rollNo;
+  const performanceData = buildCgpaTrend(studentData);
+  const batchStartYear = Number(studentData?.join_year || studentData?.joining_year || studentData?.admission_year || studentData?.admissionYear) || (Number(studentYear) ? Number(studentYear) - 4 : null);
+  const batchLabel = batchStartYear && studentYear ? `${batchStartYear}-${studentYear}` : '';
   const placementIndex = calculatePlacementIndex(studentData, myResults, {
     codingProfiles,
     githubStats: studentData?.githubStats,
@@ -224,8 +289,6 @@ export default function StudentDashboard() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-
-      {/* Welcome banner */}
       <motion.div
         initial={{ opacity: 0, y: -10 }}
         animate={{ opacity: 1, y: 0 }}
@@ -255,7 +318,6 @@ export default function StudentDashboard() {
         </div>
       </motion.div>
 
-      {/* Stat cards */}
       <div className="stat-grid">
         <StatCard title="Total Problems"  value={dashboardStats?.total || 0} subtitle="Across all platforms" icon={Code} color="#f97316" trend="up" trendValue={`${dashboardStats?.easy || 0} Easy`} delay={0} />
         <StatCard title="Coding Rank"     value={dashboardStats?.rank ? `#${dashboardStats.rank}` : 'N/A'} subtitle="Global Rank" icon={Trophy} color="#06b6d4" trend="up" trendValue={`${dashboardStats?.score || 0} pts`} delay={0.08} />
@@ -264,26 +326,28 @@ export default function StudentDashboard() {
         <StatCard title="Upcoming Exams"  value={upcomingExams.length} subtitle="Next: May 20" icon={Calendar} color="#10b981" trend="up" trendValue="3 due" delay={0.24} />
       </div>
 
-      {/* Charts row */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1.25rem' }}>
-
-        {/* CGPA Trend */}
         <div className="chart-card">
           <div className="chart-header">
-            <span className="chart-title">Yearly CGPA Trend</span>
+            <span className="chart-title">CGPA Trend{batchLabel ? ` · Batch ${batchLabel}` : ''}</span>
           </div>
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={performanceData} margin={{ top: 4, right: 4, bottom: 0, left: -16 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
-              <XAxis dataKey="year" stroke="#334155" tick={{ fontSize: 11, fill: '#71717a' }} />
-              <YAxis domain={[7.5, 10]} stroke="#334155" tick={{ fontSize: 11, fill: '#71717a' }} />
-              <Tooltip content={<ChartTip />} />
-              <Line type="monotone" dataKey="cgpa" name="CGPA" stroke="#f97316" strokeWidth={2} dot={{ fill: '#f97316', r: 3 }} activeDot={{ r: 5 }} />
-            </LineChart>
-          </ResponsiveContainer>
+          {performanceData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={performanceData} margin={{ top: 4, right: 4, bottom: 0, left: -16 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                <XAxis dataKey="year" stroke="#334155" tick={{ fontSize: 11, fill: '#71717a' }} />
+                <YAxis domain={[0, 10]} stroke="#334155" tick={{ fontSize: 11, fill: '#71717a' }} />
+                <Tooltip content={<ChartTip />} />
+                <Line type="monotone" dataKey="cgpa" name="CGPA" stroke="#f97316" strokeWidth={2} dot={{ fill: '#f97316', r: 4 }} activeDot={{ r: 6 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#71717a', fontSize: '0.875rem', textAlign: 'center', padding: '1rem' }}>
+              CGPA data is not available for this account yet.{batchLabel ? ` Batch: ${batchLabel}.` : ''}
+            </div>
+          )}
         </div>
 
-        {/* Skill Radar */}
         <div className="chart-card">
           <div className="chart-header">
             <span className="chart-title">Skill Overview</span>
@@ -298,10 +362,7 @@ export default function StudentDashboard() {
         </div>
       </div>
 
-      {/* Bottom row */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '1.25rem' }}>
-
-        {/* Upcoming Exams */}
         <div className="card">
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.125rem' }}>
             <span className="card-title">Upcoming Exams</span>
@@ -329,7 +390,6 @@ export default function StudentDashboard() {
         </div>
       </div>
 
-      {/* Subject scores */}
       <div className="card">
         <span className="card-title" style={{ display: 'block', marginBottom: '1.25rem' }}>Subject Performance</span>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '0.875rem' }}>

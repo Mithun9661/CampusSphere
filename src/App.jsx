@@ -13,7 +13,7 @@ import LoadingScreen from './components/shared/LoadingScreen';
 import StudentDashboard from './pages/student/Dashboard';
 import UpcomingExamsPage from './pages/student/UpcomingExams';
 import ResultsPage from './pages/student/Results';
-import ProfilePage from './pages/student/Profile';
+import ProfilePage from './pages/student/ProfileLive';
 import GitHubAnalysisPage from './pages/student/GitHubAnalysis';
 import ViolationsPage from './pages/student/Violations';
 import AchievementsPage from './pages/student/Achievements';

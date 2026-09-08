@@ -1,4 +1,5 @@
 const ECAP_ENTRY_URL = 'https://info.aec.edu.in/ACET/StudentMaster.aspx';
+const MAX_REDIRECTS = 8;
 
 function decodeHtml(value = '') {
   return value
@@ -26,7 +27,7 @@ function inspectForm(html) {
     const formAttrs = parseAttributes(openTag);
     const inputs = [...form.matchAll(/<input\b[^>]*>/gi)].map((m) => parseAttributes(m[0]));
     const selects = [...form.matchAll(/<select\b[^>]*>/gi)].map((m) => parseAttributes(m[0]));
-    const buttons = [...form.matchAll(/<(?:button)\b[^>]*>/gi)].map((m) => parseAttributes(m[0]));
+    const buttons = [...form.matchAll(/<button\b[^>]*>/gi)].map((m) => parseAttributes(m[0]));
 
     return {
       index,
@@ -53,8 +54,60 @@ function inferCredentialFields(forms) {
     return input.type !== 'hidden' && /user|login|roll|hall|htno|admission|regno|email/.test(key);
   }) || null;
   const submit = allInputs.find((input) => ['submit', 'button', 'image'].includes(input.type)) || null;
-
   return { user: likelyUser, password, submit };
+}
+
+function getSetCookieHeaders(headers) {
+  if (typeof headers.getSetCookie === 'function') return headers.getSetCookie();
+  const raw = headers.get('set-cookie');
+  if (!raw) return [];
+  return raw.split(/,(?=\s*[^;,=]+=[^;,]*)/g);
+}
+
+function updateCookieJar(jar, setCookieHeaders) {
+  for (const cookie of setCookieHeaders) {
+    const pair = String(cookie).split(';', 1)[0];
+    const eq = pair.indexOf('=');
+    if (eq <= 0) continue;
+    const name = pair.slice(0, eq).trim();
+    const value = pair.slice(eq + 1).trim();
+    if (value) jar.set(name, value);
+    else jar.delete(name);
+  }
+}
+
+function cookieHeader(jar) {
+  return [...jar.entries()].map(([name, value]) => `${name}=${value}`).join('; ');
+}
+
+async function fetchWithCookieRedirects(startUrl) {
+  const jar = new Map();
+  let url = new URL(startUrl);
+  const hops = [];
+
+  for (let i = 0; i <= MAX_REDIRECTS; i += 1) {
+    const headers = {
+      Accept: 'text/html,application/xhtml+xml',
+      'User-Agent': 'Mozilla/5.0 Student-360/1.0',
+    };
+    const cookies = cookieHeader(jar);
+    if (cookies) headers.Cookie = cookies;
+
+    const response = await fetch(url, { redirect: 'manual', headers });
+    updateCookieJar(jar, getSetCookieHeaders(response.headers));
+
+    const location = response.headers.get('location');
+    hops.push({ status: response.status, url: url.toString(), location: location || null });
+
+    if (response.status >= 300 && response.status < 400 && location) {
+      url = new URL(location, url);
+      continue;
+    }
+
+    return { response, finalUrl: url.toString(), hops };
+  }
+
+  throw new Error('Too many E-CAP redirects');
 }
 
 export default async function handler(req, res) {
@@ -64,14 +117,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const response = await fetch(ECAP_ENTRY_URL, {
-      redirect: 'follow',
-      headers: {
-        Accept: 'text/html,application/xhtml+xml',
-        'User-Agent': 'Mozilla/5.0 Student-360/1.0',
-      },
-    });
-
+    const { response, finalUrl, hops } = await fetchWithCookieRedirects(ECAP_ENTRY_URL);
     const html = await response.text();
     const forms = inspectForm(html);
 
@@ -80,7 +126,8 @@ export default async function handler(req, res) {
       ok: response.ok,
       status: response.status,
       source: ECAP_ENTRY_URL,
-      finalUrl: response.url,
+      finalUrl,
+      hops,
       forms,
       inferred: inferCredentialFields(forms),
     });

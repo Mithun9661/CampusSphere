@@ -32,7 +32,7 @@ function visibleText(html) {
 function controlContext(form, marker) {
   const index = form.toLowerCase().indexOf(marker.toLowerCase());
   if (index < 0) return null;
-  return visibleText(form.slice(Math.max(0, index - 350), Math.min(form.length, index + 350))).slice(0, 320) || null;
+  return visibleText(form.slice(Math.max(0, index - 700), Math.min(form.length, index + 700))).slice(0, 650) || null;
 }
 
 function inspectForm(html) {
@@ -57,7 +57,10 @@ function inspectForm(html) {
           name: attrs.name || null,
           id: attrs.id || null,
           type,
-          ...(type !== 'hidden' ? {
+          ...(type === 'hidden' ? {
+            hasValue: Boolean(attrs.value),
+            valueLength: String(attrs.value || '').length,
+          } : {
             title: attrs.title || null,
             alt: attrs.alt || null,
             onclick: attrs.onclick || null,
@@ -65,13 +68,34 @@ function inspectForm(html) {
             onblur: attrs.onblur || null,
             tabindex: attrs.tabindex || null,
             context: marker ? controlContext(form, marker) : null,
-          } : {}),
+          }),
         };
       }).filter((item) => item.name || item.id),
       selects: selects.map((attrs) => ({ name: attrs.name || null, id: attrs.id || null })),
       buttons: buttons.map((attrs) => ({ name: attrs.name || null, id: attrs.id || null, type: attrs.type || null, onclick: attrs.onclick || null })),
     };
   });
+}
+
+function scriptSnippets(html) {
+  const scripts = [...html.matchAll(/<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
+  const needles = ['hdnDPToken', 'imgBtn2', 'txtId2', 'txtPwd2', 'hdnpwd2', 'encryptJSText', 'setValue', 'WebForm_DoPostBackWithOptions'];
+  const snippets = [];
+  for (const code of scripts) {
+    const flat = code.replace(/\s+/g, ' ').trim();
+    for (const needle of needles) {
+      let from = 0;
+      while (true) {
+        const index = flat.toLowerCase().indexOf(needle.toLowerCase(), from);
+        if (index < 0) break;
+        const snippet = flat.slice(Math.max(0, index - 220), Math.min(flat.length, index + 420));
+        snippets.push({ needle, snippet });
+        from = index + needle.length;
+        if (snippets.length >= 40) return snippets;
+      }
+    }
+  }
+  return snippets;
 }
 
 function inspectScripts(html, baseUrl) {
@@ -82,23 +106,15 @@ function inspectScripts(html, baseUrl) {
       try { return new URL(decodeHtml(src), baseUrl).toString(); } catch { return decodeHtml(src); }
     });
 
-  const inline = [...html.matchAll(/<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script>/gi)]
-    .map((m) => m[1])
-    .filter((code) => /encryptJSText|setValue|hdnpwd|hdnDPToken/i.test(code))
-    .map((code) => code.replace(/\s+/g, ' ').trim().slice(0, 3000));
-
-  return { external, relevantInline: inline };
+  return { external, snippets: scriptSnippets(html) };
 }
 
 function inferCredentialFields(forms) {
   const allInputs = forms.flatMap((form) => form.inputs || []);
-  const password = allInputs.find((input) => input.type === 'password') || null;
-  const likelyUser = allInputs.find((input) => {
-    const key = `${input.name || ''} ${input.id || ''}`.toLowerCase();
-    return input.type !== 'hidden' && /user|login|roll|hall|htno|admission|regno|email|txtid/.test(key);
-  }) || null;
-  const submit = allInputs.find((input) => ['submit', 'button', 'image'].includes(input.type)) || null;
-  return { user: likelyUser, password, submit };
+  const studentUser = allInputs.find((input) => input.id === 'txtId2' || input.name === 'txtId2') || null;
+  const studentPassword = allInputs.find((input) => input.id === 'txtPwd2' || input.name === 'txtPwd2') || null;
+  const studentSubmit = allInputs.find((input) => input.id === 'imgBtn2' || input.name === 'imgBtn2') || null;
+  return { studentUser, studentPassword, studentSubmit };
 }
 
 function getSetCookieHeaders(headers) {

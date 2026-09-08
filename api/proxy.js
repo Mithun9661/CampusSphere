@@ -16,6 +16,24 @@ export default async function handler(req, res) {
     return res.status(400).json({ error: 'Missing path parameter' });
   }
 
+  // The original Maya coding-profile endpoints were removed. The legacy Profile
+  // component can still call them while the live wrapper is mounted, so stop those
+  // calls here instead of forwarding them upstream and generating repeated 404s.
+  const removedCodingEndpoints = new Set([
+    'get-leetcode-details-by-rollno',
+    'get-geeksforgeeks-details-by-rollno',
+    'get-codechef-details-by-rollno',
+    'get-hackerrank-details-by-rollno',
+  ]);
+  if (removedCodingEndpoints.has(targetPath)) {
+    return res.status(200).json({});
+  }
+
+  // Fetch the four public coding profiles through our server-side aggregator.
+  if (targetPath === 'coding-profiles') {
+    return handleCodingProfiles(req, res);
+  }
+
   // Handle result submission locally
   if (targetPath.startsWith('submit-result') || targetPath.startsWith('results/')) {
     return handleResultSubmission(req, res, targetPath);
@@ -126,5 +144,78 @@ async function handleResultSubmission(req, res, targetPath) {
   } catch (error) {
     console.error('Result submission error:', error);
     return res.status(500).json({ error: 'Failed to process result', details: error.message });
+  }
+}
+
+/**
+ * Fetch public coding-platform statistics for linked student profiles.
+ * Supported query params: leetcode, gfg, codechef, hackerrank.
+ */
+async function handleCodingProfiles(req, res) {
+  if (req.method !== 'GET') {
+    res.setHeader('Allow', 'GET');
+    return res.status(405).json({ error: 'Method not allowed' });
+  }
+
+  const supported = ['leetcode', 'gfg', 'codechef', 'hackerrank'];
+  const params = new URLSearchParams();
+  const requested = {};
+
+  for (const platform of supported) {
+    const rawValue = Array.isArray(req.query?.[platform]) ? req.query[platform][0] : req.query?.[platform];
+    const username = String(rawValue || '').trim().replace(/^@/, '');
+    if (!username) continue;
+    if (!/^[A-Za-z0-9_.-]{1,64}$/.test(username)) {
+      return res.status(400).json({ error: `Invalid ${platform} username` });
+    }
+    requested[platform] = username;
+    params.set(platform, username);
+  }
+
+  if (Object.keys(requested).length === 0) {
+    return res.status(400).json({ error: 'At least one coding profile username is required' });
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 18000);
+
+  try {
+    const upstreamUrl = `https://coding-profile-service.onrender.com/stats?${params.toString()}`;
+    const response = await fetch(upstreamUrl, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        'User-Agent': 'Student-360/1.0',
+      },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const text = await response.text().catch(() => '');
+      console.error('Coding profile provider error:', response.status, text.slice(0, 300));
+      return res.status(502).json({ error: 'Coding profile provider is temporarily unavailable' });
+    }
+
+    const data = await response.json();
+    const profiles = Array.isArray(data?.profiles) ? data.profiles : [];
+    const filteredProfiles = profiles.filter((profile) => {
+      const platform = String(profile?.platform || '').toLowerCase();
+      return supported.includes(platform) && requested[platform];
+    });
+
+    res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=1800');
+    return res.status(200).json({
+      success: true,
+      profiles: filteredProfiles,
+      requested: Object.keys(requested),
+    });
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      return res.status(504).json({ error: 'Coding profile provider timed out' });
+    }
+    console.error('Coding profile fetch failed:', error);
+    return res.status(502).json({ error: 'Failed to fetch coding profile stats' });
+  } finally {
+    clearTimeout(timeout);
   }
 }

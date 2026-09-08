@@ -20,6 +20,21 @@ function parseAttributes(tag) {
   return attrs;
 }
 
+function visibleText(html) {
+  return decodeHtml(String(html || '')
+    .replace(/<script\b[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim());
+}
+
+function controlContext(form, marker) {
+  const index = form.toLowerCase().indexOf(marker.toLowerCase());
+  if (index < 0) return null;
+  return visibleText(form.slice(Math.max(0, index - 350), Math.min(form.length, index + 350))).slice(0, 320) || null;
+}
+
 function inspectForm(html) {
   const forms = [...html.matchAll(/<form\b[\s\S]*?<\/form>/gi)].map((m) => m[0]);
   return forms.map((form, index) => {
@@ -35,13 +50,23 @@ function inspectForm(html) {
       name: formAttrs.name || null,
       method: (formAttrs.method || 'GET').toUpperCase(),
       action: formAttrs.action || null,
-      inputs: inputs.map((attrs) => ({
-        name: attrs.name || null,
-        id: attrs.id || null,
-        type: (attrs.type || 'text').toLowerCase(),
-      })).filter((item) => item.name || item.id),
+      inputs: inputs.map((attrs) => {
+        const type = (attrs.type || 'text').toLowerCase();
+        const marker = attrs.id || attrs.name || '';
+        return {
+          name: attrs.name || null,
+          id: attrs.id || null,
+          type,
+          ...(type !== 'hidden' ? {
+            title: attrs.title || null,
+            alt: attrs.alt || null,
+            onclick: attrs.onclick || null,
+            context: marker ? controlContext(form, marker) : null,
+          } : {}),
+        };
+      }).filter((item) => item.name || item.id),
       selects: selects.map((attrs) => ({ name: attrs.name || null, id: attrs.id || null })),
-      buttons: buttons.map((attrs) => ({ name: attrs.name || null, id: attrs.id || null, type: attrs.type || null })),
+      buttons: buttons.map((attrs) => ({ name: attrs.name || null, id: attrs.id || null, type: attrs.type || null, onclick: attrs.onclick || null })),
     };
   });
 }
@@ -51,7 +76,7 @@ function inferCredentialFields(forms) {
   const password = allInputs.find((input) => input.type === 'password') || null;
   const likelyUser = allInputs.find((input) => {
     const key = `${input.name || ''} ${input.id || ''}`.toLowerCase();
-    return input.type !== 'hidden' && /user|login|roll|hall|htno|admission|regno|email/.test(key);
+    return input.type !== 'hidden' && /user|login|roll|hall|htno|admission|regno|email|txtid/.test(key);
   }) || null;
   const submit = allInputs.find((input) => ['submit', 'button', 'image'].includes(input.type)) || null;
   return { user: likelyUser, password, submit };

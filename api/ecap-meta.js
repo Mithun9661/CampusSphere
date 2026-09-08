@@ -29,94 +29,79 @@ function visibleText(html) {
     .trim());
 }
 
-function controlContext(form, marker) {
-  const index = form.toLowerCase().indexOf(marker.toLowerCase());
-  if (index < 0) return null;
-  return visibleText(form.slice(Math.max(0, index - 700), Math.min(form.length, index + 700))).slice(0, 650) || null;
+function safeInput(attrs) {
+  const type = (attrs.type || 'text').toLowerCase();
+  return {
+    name: attrs.name || null,
+    id: attrs.id || null,
+    type,
+    className: attrs.class || null,
+    placeholder: attrs.placeholder || null,
+    title: attrs.title || null,
+    autocomplete: attrs.autocomplete || null,
+    onclick: attrs.onclick || null,
+  };
 }
 
-function inspectForm(html) {
-  const forms = [...html.matchAll(/<form\b[\s\S]*?<\/form>/gi)].map((m) => m[0]);
-  return forms.map((form, index) => {
-    const openTag = form.match(/<form\b[^>]*>/i)?.[0] || '';
-    const formAttrs = parseAttributes(openTag);
-    const inputs = [...form.matchAll(/<input\b[^>]*>/gi)].map((m) => parseAttributes(m[0]));
-    const selects = [...form.matchAll(/<select\b[^>]*>/gi)].map((m) => parseAttributes(m[0]));
-    const buttons = [...form.matchAll(/<button\b[^>]*>/gi)].map((m) => parseAttributes(m[0]));
-
+function inspectForms(html) {
+  return [...html.matchAll(/<form\b[\s\S]*?<\/form>/gi)].map((m, index) => {
+    const form = m[0];
+    const formAttrs = parseAttributes(form.match(/<form\b[^>]*>/i)?.[0] || '');
     return {
       index,
       id: formAttrs.id || null,
       name: formAttrs.name || null,
       method: (formAttrs.method || 'GET').toUpperCase(),
       action: formAttrs.action || null,
-      inputs: inputs.map((attrs) => {
-        const type = (attrs.type || 'text').toLowerCase();
-        const marker = attrs.id || attrs.name || '';
-        return {
-          name: attrs.name || null,
-          id: attrs.id || null,
-          type,
-          ...(type === 'hidden' ? {
-            hasValue: Boolean(attrs.value),
-            valueLength: String(attrs.value || '').length,
-          } : {
-            title: attrs.title || null,
-            alt: attrs.alt || null,
-            onclick: attrs.onclick || null,
-            onkeyup: attrs.onkeyup || null,
-            onblur: attrs.onblur || null,
-            tabindex: attrs.tabindex || null,
-            context: marker ? controlContext(form, marker) : null,
-          }),
-        };
-      }).filter((item) => item.name || item.id),
-      selects: selects.map((attrs) => ({ name: attrs.name || null, id: attrs.id || null })),
-      buttons: buttons.map((attrs) => ({ name: attrs.name || null, id: attrs.id || null, type: attrs.type || null, onclick: attrs.onclick || null })),
+      inputs: [...form.matchAll(/<input\b[^>]*>/gi)].map((x) => safeInput(parseAttributes(x[0]))),
+      buttons: [...form.matchAll(/<button\b[^>]*>/gi)].map((x) => {
+        const a = parseAttributes(x[0]);
+        return { name: a.name || null, id: a.id || null, type: a.type || null, className: a.class || null, onclick: a.onclick || null };
+      }),
     };
   });
 }
 
-function scriptSnippets(html) {
-  const scripts = [...html.matchAll(/<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]);
-  const needles = ['login', 'student', 'password', 'username', 'roll', 'captcha', 'WebForm_DoPostBackWithOptions', '__doPostBack'];
-  const snippets = [];
-  for (const code of scripts) {
-    const flat = code.replace(/\s+/g, ' ').trim();
-    for (const needle of needles) {
-      let from = 0;
-      while (true) {
-        const index = flat.toLowerCase().indexOf(needle.toLowerCase(), from);
-        if (index < 0) break;
-        snippets.push({ needle, snippet: flat.slice(Math.max(0, index - 220), Math.min(flat.length, index + 420)) });
-        from = index + needle.length;
-        if (snippets.length >= 40) return snippets;
-      }
-    }
-  }
-  return snippets;
+function inspectPageInputs(html) {
+  return [...html.matchAll(/<input\b[^>]*>/gi)].map((m) => safeInput(parseAttributes(m[0])));
 }
 
-function inspectScripts(html, baseUrl) {
-  const external = [...html.matchAll(/<script\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*>/gi)]
+function inspectLinks(html, baseUrl) {
+  return [...html.matchAll(/<a\b[^>]*>[\s\S]*?<\/a>/gi)].map((m) => {
+    const open = m[0].match(/<a\b[^>]*>/i)?.[0] || '';
+    const attrs = parseAttributes(open);
+    let href = attrs.href || null;
+    if (href && !/^javascript:/i.test(href)) {
+      try { href = new URL(href, baseUrl).toString(); } catch {}
+    }
+    return { text: visibleText(m[0]).slice(0, 120), href, id: attrs.id || null, className: attrs.class || null, onclick: attrs.onclick || null };
+  }).filter((item) => item.text || item.href || item.onclick);
+}
+
+function snippets(code) {
+  const needles = ['login', 'student', 'password', 'username', 'roll', 'captcha', 'postback', 'ajax'];
+  const flat = String(code || '').replace(/\s+/g, ' ').trim();
+  const out = [];
+  for (const needle of needles) {
+    let from = 0;
+    while (true) {
+      const index = flat.toLowerCase().indexOf(needle, from);
+      if (index < 0) break;
+      out.push({ needle, snippet: flat.slice(Math.max(0, index - 220), Math.min(flat.length, index + 420)) });
+      from = index + needle.length;
+      if (out.length >= 40) return out;
+    }
+  }
+  return out;
+}
+
+function externalScriptUrls(html, baseUrl) {
+  return [...html.matchAll(/<script\b[^>]*\bsrc\s*=\s*(?:"([^"]+)"|'([^']+)')[^>]*>/gi)]
     .map((m) => m[1] || m[2])
     .filter(Boolean)
     .map((src) => {
       try { return new URL(decodeHtml(src), baseUrl).toString(); } catch { return decodeHtml(src); }
     });
-
-  return { external, snippets: scriptSnippets(html) };
-}
-
-function inferCredentialFields(forms) {
-  const allInputs = forms.flatMap((form) => form.inputs || []);
-  const password = allInputs.find((input) => input.type === 'password') || null;
-  const user = allInputs.find((input) => {
-    const key = `${input.name || ''} ${input.id || ''} ${input.context || ''}`.toLowerCase();
-    return input.type !== 'hidden' && /student|user|login|roll|hall|htno|reg|email|id/.test(key);
-  }) || null;
-  const submit = allInputs.find((input) => ['submit', 'button', 'image'].includes(input.type)) || null;
-  return { user, password, submit };
 }
 
 function getSetCookieHeaders(headers) {
@@ -146,7 +131,6 @@ async function fetchWithCookieRedirects(startUrl) {
   const jar = new Map();
   let url = new URL(startUrl);
   const hops = [];
-
   for (let i = 0; i <= MAX_REDIRECTS; i += 1) {
     const headers = {
       Accept: 'text/html,application/xhtml+xml',
@@ -155,21 +139,16 @@ async function fetchWithCookieRedirects(startUrl) {
     };
     const cookies = cookieHeader(jar);
     if (cookies) headers.Cookie = cookies;
-
     const response = await fetch(url, { redirect: 'manual', headers });
     updateCookieJar(jar, getSetCookieHeaders(response.headers));
-
     const location = response.headers.get('location');
     hops.push({ status: response.status, url: url.toString(), location: location || null });
-
     if (response.status >= 300 && response.status < 400 && location) {
       url = new URL(location, url);
       continue;
     }
-
-    return { response, finalUrl: url.toString(), hops };
+    return { response, finalUrl: url.toString(), hops, jar };
   }
-
   throw new Error('Too many E-CAP redirects');
 }
 
@@ -178,11 +157,23 @@ export default async function handler(req, res) {
     res.setHeader('Allow', 'GET');
     return res.status(405).json({ error: 'Method not allowed' });
   }
-
   try {
-    const { response, finalUrl, hops } = await fetchWithCookieRedirects(ECAP_ENTRY_URL);
+    const { response, finalUrl, hops, jar } = await fetchWithCookieRedirects(ECAP_ENTRY_URL);
     const html = await response.text();
-    const forms = inspectForm(html);
+    const external = externalScriptUrls(html, finalUrl);
+    const externalSnippets = [];
+    for (const url of external.slice(0, 8)) {
+      try {
+        const headers = { 'User-Agent': 'Mozilla/5.0 Student-360/1.0' };
+        const cookies = cookieHeader(jar);
+        if (cookies) headers.Cookie = cookies;
+        const scriptResponse = await fetch(url, { headers });
+        if (!scriptResponse.ok) continue;
+        const code = await scriptResponse.text();
+        const found = snippets(code);
+        if (found.length) externalSnippets.push({ url, snippets: found });
+      } catch {}
+    }
 
     res.setHeader('Cache-Control', 'no-store');
     return res.status(200).json({
@@ -191,9 +182,15 @@ export default async function handler(req, res) {
       source: ECAP_ENTRY_URL,
       finalUrl,
       hops,
-      forms,
-      scripts: inspectScripts(html, finalUrl),
-      inferred: inferCredentialFields(forms),
+      title: html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) ? visibleText(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)[1]) : '',
+      forms: inspectForms(html),
+      pageInputs: inspectPageInputs(html),
+      links: inspectLinks(html, finalUrl),
+      scripts: {
+        external,
+        inline: snippets([...html.matchAll(/<script\b(?![^>]*\bsrc\s*=)[^>]*>([\s\S]*?)<\/script>/gi)].map((m) => m[1]).join('\n')),
+        externalSnippets,
+      },
     });
   } catch (error) {
     console.error('E-CAP metadata discovery failed:', error);

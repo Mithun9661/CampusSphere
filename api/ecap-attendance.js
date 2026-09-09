@@ -1,1 +1,1 @@
-export { default } from './ecap-attendance-v5.js';
+export { default } from '../lib/ecapAttendanceV7.js';

@@ -1,8 +1,7 @@
-import { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import {
-  LayoutDashboard, BookOpen, Calendar, Award, User, GitBranch,
-  AlertTriangle, Trophy, ChevronLeft, ChevronRight, GraduationCap,
+  LayoutDashboard, Calendar, Award, User, GitBranch,
+  AlertTriangle, Trophy, GraduationCap,
   Users, ClipboardList, BarChart3, Bell, Star, LogOut,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -11,7 +10,7 @@ import { useApp } from '../../context/AppContext';
 import { generateInitials, getAvatarColor } from '../../utils/helpers';
 
 const studentNav = [
-  { icon: LayoutDashboard, label: 'Dashboard',      path: '/student/dashboard' },
+  { icon: LayoutDashboard, label: 'Dashboard',       path: '/student/dashboard' },
   { icon: Calendar,        label: 'Upcoming Exams',  path: '/student/exams' },
   { icon: Award,           label: 'Results',         path: '/student/results' },
   { icon: User,            label: 'Profile',         path: '/student/profile' },
@@ -21,7 +20,7 @@ const studentNav = [
 ];
 
 const adminNav = [
-  { icon: LayoutDashboard, label: 'Dashboard',      path: '/admin/dashboard' },
+  { icon: LayoutDashboard, label: 'Dashboard',       path: '/admin/dashboard' },
   { icon: Users,           label: 'Students',        path: '/admin/students' },
   { icon: ClipboardList,   label: 'Exams',           path: '/admin/exams' },
   { icon: Award,           label: 'Results',         path: '/admin/results' },
@@ -34,16 +33,18 @@ const adminNav = [
 
 export default function Sidebar() {
   const { user, role, logout } = useAuth();
-  const { sidebarCollapsed, toggleSidebar } = useApp();
+  const { sidebarCollapsed } = useApp();
   const navigate = useNavigate();
 
-  const navItems  = role === 'admin' ? adminNav : studentNav;
-  const initials  = generateInitials(user?.name || '');
-  const avatarBg  = getAvatarColor(user?.name || '');
-
-  const handleLogout = () => { logout(); navigate('/login'); };
-
+  const navItems = role === 'admin' ? adminNav : studentNav;
+  const initials = generateInitials(user?.name || '');
+  const avatarBg = getAvatarColor(user?.name || '');
   const collapsed = sidebarCollapsed;
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
 
   return (
     <motion.aside
@@ -52,18 +53,20 @@ export default function Sidebar() {
       className="sidebar no-select"
       style={{ overflow: 'hidden' }}
     >
-      {/* ── Header ─────────────────────────────── */}
       <div className="sidebar-header">
-        {/* Logo mark */}
         <motion.div
           whileHover={{ scale: 1.06 }}
           className="flex items-center justify-center rounded-xl flex-shrink-0"
-          style={{ width: 36, height: 36, background: 'linear-gradient(135deg,#f97316,#f59e0b)' }}
+          style={{
+            width: 36,
+            height: 36,
+            background: 'linear-gradient(135deg,#4f46e5,#06b6d4)',
+            boxShadow: '0 8px 24px rgba(79,70,229,.28)',
+          }}
         >
           <GraduationCap size={18} color="white" />
         </motion.div>
 
-        {/* Brand name — visible only when expanded */}
         <AnimatePresence>
           {!collapsed && (
             <motion.div
@@ -73,19 +76,28 @@ export default function Sidebar() {
               transition={{ duration: 0.18 }}
               style={{ marginLeft: '0.625rem', overflow: 'hidden' }}
             >
-              <span className="gradient-text" style={{ fontWeight: 700, fontSize: '0.9375rem', letterSpacing: '-0.02em', display: 'block', lineHeight: 1.2 }}>
-                STUDENT 360
+              <span
+                style={{
+                  fontWeight: 800,
+                  fontSize: '0.9375rem',
+                  letterSpacing: '-0.02em',
+                  display: 'block',
+                  lineHeight: 1.2,
+                  background: 'linear-gradient(90deg,#a5b4fc,#67e8f9)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                }}
+              >
+                CampusSphere
               </span>
-              <span style={{ fontSize: '0.6875rem', color: '#475569', fontWeight: 500 }}>
+              <span style={{ fontSize: '0.6875rem', color: '#64748b', fontWeight: 500 }}>
                 {role === 'admin' ? 'Admin Portal' : 'Student Portal'}
               </span>
             </motion.div>
           )}
         </AnimatePresence>
-
       </div>
 
-      {/* ── Role badge ─────────────────────────── */}
       <AnimatePresence>
         {!collapsed && (
           <motion.div
@@ -97,11 +109,11 @@ export default function Sidebar() {
             <div style={{
               padding: '0.375rem 0.75rem',
               borderRadius: '0.5rem',
-              background: role === 'admin' ? 'rgba(245, 158, 11,0.1)' : 'rgba(249, 115, 22,0.1)',
-              border: `1px solid ${role === 'admin' ? 'rgba(245, 158, 11,0.2)' : 'rgba(249, 115, 22,0.2)'}`,
+              background: role === 'admin' ? 'rgba(139,92,246,.10)' : 'rgba(6,182,212,.09)',
+              border: `1px solid ${role === 'admin' ? 'rgba(139,92,246,.25)' : 'rgba(6,182,212,.22)'}`,
               fontSize: '0.75rem',
               fontWeight: 600,
-              color: role === 'admin' ? '#a78bfa' : '#fdba74',
+              color: role === 'admin' ? '#c4b5fd' : '#67e8f9',
               letterSpacing: '0.01em',
             }}>
               {role === 'admin' ? '⚙️  Administrator' : '🎓  Student'}
@@ -110,21 +122,19 @@ export default function Sidebar() {
         )}
       </AnimatePresence>
 
-      {/* ── Nav section label ─────────────────── */}
       <AnimatePresence>
         {!collapsed && (
           <motion.p
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            style={{ padding: '0.875rem 1.25rem 0.25rem', fontSize: '0.6875rem', fontWeight: 600, color: '#334155', textTransform: 'uppercase', letterSpacing: '0.08em' }}
+            style={{ padding: '0.875rem 1.25rem 0.25rem', fontSize: '0.6875rem', fontWeight: 600, color: '#475569', textTransform: 'uppercase', letterSpacing: '0.08em' }}
           >
             Menu
           </motion.p>
         )}
       </AnimatePresence>
 
-      {/* ── Nav items ─────────────────────────── */}
       <div className="sidebar-body">
         {navItems.map((item) => (
           <NavLink key={item.path} to={item.path} style={{ display: 'block', textDecoration: 'none' }}>
@@ -132,9 +142,17 @@ export default function Sidebar() {
               <div
                 className={`nav-item ${isActive ? 'active' : ''}`}
                 title={collapsed ? item.label : undefined}
-                style={{ justifyContent: collapsed ? 'center' : 'flex-start' }}
+                style={{
+                  justifyContent: collapsed ? 'center' : 'flex-start',
+                  ...(isActive ? {
+                    background: 'linear-gradient(135deg, rgba(79,70,229,.20), rgba(6,182,212,.09))',
+                    borderColor: 'rgba(99,102,241,.36)',
+                    boxShadow: '0 0 16px rgba(79,70,229,.16)',
+                    color: '#e0e7ff',
+                  } : {}),
+                }}
               >
-                <item.icon size={17} className="nav-item-icon" style={{ flexShrink: 0, color: isActive ? '#ffedd5' : '#71717a' }} />
+                <item.icon size={17} className="nav-item-icon" style={{ flexShrink: 0, color: isActive ? '#a5b4fc' : '#71717a' }} />
                 <AnimatePresence>
                   {!collapsed && (
                     <motion.span
@@ -154,9 +172,7 @@ export default function Sidebar() {
         ))}
       </div>
 
-      {/* ── Footer: sign-out + user ───────────── */}
       <div className="sidebar-footer">
-        {/* Sign out */}
         <button
           onClick={handleLogout}
           className="nav-item"
@@ -175,13 +191,19 @@ export default function Sidebar() {
           </AnimatePresence>
         </button>
 
-        {/* User info */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', padding: '0.5rem 0.75rem', borderRadius: '0.75rem', background: 'rgba(255,255,255,0.03)', marginTop: '0.25rem', overflow: 'hidden' }}>
           <div style={{
-            width: 32, height: 32, borderRadius: '50%',
-            background: avatarBg, flexShrink: 0,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: '0.6875rem', fontWeight: 700, color: '#fff',
+            width: 32,
+            height: 32,
+            borderRadius: '50%',
+            background: avatarBg,
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontSize: '0.6875rem',
+            fontWeight: 700,
+            color: '#fff',
           }}>
             {initials}
           </div>
@@ -189,7 +211,7 @@ export default function Sidebar() {
             {!collapsed && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} style={{ minWidth: 0 }}>
                 <p style={{ fontSize: '0.8125rem', fontWeight: 600, color: '#fafafa', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 140 }}>{user?.name}</p>
-                <p style={{ fontSize: '0.6875rem', color: '#475569', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 140 }}>{user?.email}</p>
+                <p style={{ fontSize: '0.6875rem', color: '#64748b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 140 }}>{user?.email}</p>
               </motion.div>
             )}
           </AnimatePresence>

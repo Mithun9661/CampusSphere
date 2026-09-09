@@ -18,6 +18,7 @@ const num = (...values) => {
   return Number.isFinite(parsed) ? parsed : null;
 };
 const branchArray = (value) => Array.isArray(value) ? value.map(clean).filter(Boolean) : (clean(value) ? [clean(value)] : []);
+const rollOf = (value = {}) => clean(first(value.rollNo, value.roll_no, value.studentRollNo)).toUpperCase();
 
 function normalizeStudent(id, data = {}) {
   const academic = data.academicSnapshot || {};
@@ -27,9 +28,24 @@ function normalizeStudent(id, data = {}) {
   const passoutYear = first(data.passoutYear, data.passout_year, profile.passoutYear, profile.passout_year, academic.passoutYear, academic.passout_year) ?? '';
   const college = clean(first(data.college, profile.college, academic.college));
   const branch = branchArray(first(data.branch, profile.branch, academic.branch));
-  const btech = num(data.btech, data.btechPercentage, profile.btech, profile.btechPercentage, academic.btech, academic.overallPercentage, academic.percentage);
+
+  // Prefer the authenticated Exam Section percentage over the generic college-profile btech field.
+  const btech = num(
+    academic.overallPercentage,
+    academic.percentage,
+    academic.btech,
+    data.btechPercentage,
+    data.btech,
+    profile.btechPercentage,
+    profile.btech,
+  );
   const cgpa = num(data.cgpa, academic.cgpa, profile.cgpa);
-  const backlogs = num(data.backlogs, profile.backlogs, academic.backlogs) ?? 0;
+
+  // Do not treat the generic profile "backlogs" counter as an active backlog.
+  // Active backlog count is derived from actual result/grade evidence below.
+  const trustedStoredBacklogs = data.backlogsSource === 'academic_results' ? num(data.backlogs) : null;
+  const backlogs = num(data.activeBacklogs, data.currentBacklogs, data.verifiedBacklogs, academic.activeBacklogs, trustedStoredBacklogs) ?? 0;
+
   return {
     ...data,
     id,
@@ -48,8 +64,42 @@ function normalizeStudent(id, data = {}) {
 }
 
 function normalizeResult(id, data = {}) {
-  const rollNo = clean(first(data.rollNo, data.roll_no, data.studentRollNo)).toUpperCase();
+  const rollNo = rollOf(data);
   return { id, ...data, rollNo, roll_no: data.roll_no || rollNo };
+}
+
+function deriveActiveBacklogs(student, results = []) {
+  const academic = student.academicSnapshot || {};
+  const failed = new Set();
+  let hasOutcomeEvidence = false;
+
+  const inspect = (item = {}, fallbackKey = '') => {
+    const grade = clean(first(item.grade, item.letterGrade, item.gradePointLetter)).toUpperCase();
+    const status = clean(first(item.result, item.status, item.resultStatus, item.outcome)).toUpperCase();
+    if (grade || status) hasOutcomeEvidence = true;
+
+    const isFailGrade = ['F', 'RA', 'FAIL', 'FAILED'].includes(grade);
+    const isFailStatus = /\b(FAIL|FAILED|BACKLOG|REAPPEAR|RE-APPEAR|RA)\b/.test(status);
+    if (!isFailGrade && !isFailStatus) return;
+
+    const key = clean(first(item.code, item.subjectCode, item.subject, item.subjectName, fallbackKey)) || `failed-${failed.size + 1}`;
+    failed.add(key.toUpperCase());
+  };
+
+  const semesters = Array.isArray(academic.semesters) ? academic.semesters : [];
+  semesters.forEach((semester, semesterIndex) => {
+    const subjects = Array.isArray(semester?.subjects) ? semester.subjects : [];
+    subjects.forEach((subject, subjectIndex) => inspect(subject, `${semesterIndex}-${subjectIndex}`));
+  });
+
+  const studentResults = results.filter((result) => rollOf(result) === student.rollNo);
+  studentResults.forEach((result, index) => {
+    const subjects = Array.isArray(result.subjects) ? result.subjects : [];
+    if (subjects.length) subjects.forEach((subject, subjectIndex) => inspect(subject, `result-${index}-${subjectIndex}`));
+    else inspect(result, `result-${index}`);
+  });
+
+  return { known: hasOutcomeEvidence, count: failed.size };
 }
 
 async function fetchLiveCollegeProfile(student) {
@@ -74,14 +124,12 @@ async function fetchLiveCollegeProfile(student) {
     const liveCollege = clean(profile.college);
     const liveBranch = branchArray(profile.branch);
     const livePassout = first(profile.passout_year, profile.passoutYear);
-    const liveBacklogs = num(profile.backlogs);
     const liveBtech = num(profile.btech);
 
     if (liveCollege) cache.college = liveCollege;
     if (!student.branch?.length && liveBranch.length) cache.branch = liveBranch;
     if (livePassout !== undefined && clean(livePassout)) cache.passout_year = livePassout;
-    if (liveBacklogs !== null) cache.backlogs = liveBacklogs;
-    if (liveBtech !== null) cache.btech = liveBtech;
+    if (student.btech === null && liveBtech !== null) cache.btech = liveBtech;
 
     if (Object.keys(cache).length) {
       await setDoc(doc(db, 'students', student.id), cache, { merge: true });
@@ -92,6 +140,19 @@ async function fetchLiveCollegeProfile(student) {
     console.warn(`Live college profile unavailable for ${student?.rollNo || student?.id}:`, error);
     return null;
   }
+}
+
+function withAcademicMetrics(student, resultList) {
+  const backlogInfo = deriveActiveBacklogs(student, resultList);
+  const next = {
+    ...student,
+    backlogs: backlogInfo.known ? backlogInfo.count : student.backlogs,
+  };
+  next.placementIndex = calculatePlacementIndex(next, resultList, {
+    githubStats: next.githubStats,
+    codingProfiles: next.codingProfiles,
+  });
+  return { student: next, backlogInfo };
 }
 
 export default function AdminStudents() {
@@ -115,14 +176,8 @@ export default function AdminStudents() {
         ]);
         const resultList = resultSnap.docs.map((item) => normalizeResult(item.id, item.data()));
         let studentList = studentSnap.docs.map((item) => {
-          const student = normalizeStudent(item.id, item.data());
-          return {
-            ...student,
-            placementIndex: calculatePlacementIndex(student, resultList, {
-              githubStats: student.githubStats,
-              codingProfiles: student.codingProfiles,
-            }),
-          };
+          const base = normalizeStudent(item.id, item.data());
+          return withAcademicMetrics(base, resultList).student;
         });
 
         setResults(resultList);
@@ -130,16 +185,22 @@ export default function AdminStudents() {
 
         const enriched = await Promise.all(studentList.map(async (student) => {
           const needsLiveProfile = !student.college || !student.passoutYear || student.btech === null;
-          if (!needsLiveProfile) return student;
-          const live = await fetchLiveCollegeProfile(student);
-          if (!live) return student;
-          return {
-            ...live,
-            placementIndex: calculatePlacementIndex(live, resultList, {
-              githubStats: live.githubStats,
-              codingProfiles: live.codingProfiles,
-            }),
-          };
+          const live = needsLiveProfile ? await fetchLiveCollegeProfile(student) : student;
+          const source = live || student;
+          const metrics = withAcademicMetrics(source, resultList);
+
+          if (metrics.backlogInfo.known) {
+            try {
+              await setDoc(doc(db, 'students', source.id), {
+                backlogs: metrics.backlogInfo.count,
+                backlogsSource: 'academic_results',
+              }, { merge: true });
+            } catch (error) {
+              console.warn(`Could not cache verified backlog count for ${source.rollNo}:`, error);
+            }
+          }
+
+          return metrics.student;
         }));
 
         studentList = enriched;
@@ -184,11 +245,7 @@ export default function AdminStudents() {
       const targetId = modalStudent?.id || rollNo;
       if (modalStudent?.id) await updateDoc(doc(db, 'students', targetId), payload);
       else await setDoc(doc(db, 'students', targetId), payload);
-      const next = normalizeStudent(targetId, { ...(modalStudent || {}), ...payload });
-      next.placementIndex = calculatePlacementIndex(next, results, {
-        githubStats: next.githubStats,
-        codingProfiles: next.codingProfiles,
-      });
+      const next = withAcademicMetrics(normalizeStudent(targetId, { ...(modalStudent || {}), ...payload }), results).student;
       setStudents((current) => modalStudent?.id
         ? current.map((student) => student.id === targetId ? next : student)
         : [next, ...current]);

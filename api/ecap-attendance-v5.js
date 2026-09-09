@@ -105,7 +105,7 @@ function tableRows(html){
 }
 function num(v){
   const s=String(v??'').replace(/,/g,'').replace(/%/g,'').trim();
-  if(!s||!^-?(?:\d+(?:\.\d+)?|\.\d+)$/.test(s)) return null;
+  if(!s||!/^-?(?:\d+(?:\.\d+)?|\.\d+)$/.test(s)) return null;
   const n=Number(s); return Number.isFinite(n)?n:null;
 }
 function validTriple(held,attended,percentage){

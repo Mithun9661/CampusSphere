@@ -52,6 +52,48 @@ function normalizeResult(id, data = {}) {
   return { id, ...data, rollNo, roll_no: data.roll_no || rollNo };
 }
 
+async function fetchLiveCollegeProfile(student) {
+  if (!student?.rollNo) return null;
+  try {
+    const idResponse = await fetch('/api/get-student-id-by-rollno', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ roll_no: student.rollNo }),
+    });
+    const idPayload = idResponse.ok ? await idResponse.json().catch(() => null) : null;
+    if (!idPayload?.success || !idPayload?.objectId) return null;
+
+    const profileResponse = await fetch(`/api/get-user-by-id/${encodeURIComponent(idPayload.objectId)}`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!profileResponse.ok) return null;
+    const profile = await profileResponse.json().catch(() => null);
+    if (!profile || typeof profile !== 'object') return null;
+
+    const cache = {};
+    const liveCollege = clean(profile.college);
+    const liveBranch = branchArray(profile.branch);
+    const livePassout = first(profile.passout_year, profile.passoutYear);
+    const liveBacklogs = num(profile.backlogs);
+    const liveBtech = num(profile.btech);
+
+    if (liveCollege) cache.college = liveCollege;
+    if (!student.branch?.length && liveBranch.length) cache.branch = liveBranch;
+    if (livePassout !== undefined && clean(livePassout)) cache.passout_year = livePassout;
+    if (liveBacklogs !== null) cache.backlogs = liveBacklogs;
+    if (liveBtech !== null) cache.btech = liveBtech;
+
+    if (Object.keys(cache).length) {
+      await setDoc(doc(db, 'students', student.id), cache, { merge: true });
+    }
+
+    return normalizeStudent(student.id, { ...student, ...cache });
+  } catch (error) {
+    console.warn(`Live college profile unavailable for ${student?.rollNo || student?.id}:`, error);
+    return null;
+  }
+}
+
 export default function AdminStudents() {
   const [loading, setLoading] = useState(true);
   const [students, setStudents] = useState([]);
@@ -72,7 +114,7 @@ export default function AdminStudents() {
           getDocs(collection(db, 'results')),
         ]);
         const resultList = resultSnap.docs.map((item) => normalizeResult(item.id, item.data()));
-        const studentList = studentSnap.docs.map((item) => {
+        let studentList = studentSnap.docs.map((item) => {
           const student = normalizeStudent(item.id, item.data());
           return {
             ...student,
@@ -82,7 +124,25 @@ export default function AdminStudents() {
             }),
           };
         });
+
         setResults(resultList);
+        setStudents(studentList);
+
+        const enriched = await Promise.all(studentList.map(async (student) => {
+          const needsLiveProfile = !student.college || !student.passoutYear || student.btech === null;
+          if (!needsLiveProfile) return student;
+          const live = await fetchLiveCollegeProfile(student);
+          if (!live) return student;
+          return {
+            ...live,
+            placementIndex: calculatePlacementIndex(live, resultList, {
+              githubStats: live.githubStats,
+              codingProfiles: live.codingProfiles,
+            }),
+          };
+        }));
+
+        studentList = enriched;
         setStudents(studentList);
       } catch (error) {
         console.error('Admin students load failed:', error);

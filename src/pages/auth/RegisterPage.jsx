@@ -81,30 +81,36 @@ export default function RegisterPage() {
     }
   };
 
-  const inputClass = 'w-full pl-12 pr-4 py-3.5 rounded-2xl bg-black/40 border border-white/10 text-white outline-none focus:border-orange-500/50 focus:bg-black/60 transition-all placeholder:text-zinc-700 font-medium';
+  const inputClass = 'w-full pl-12 pr-4 py-3.5 rounded-2xl bg-black/40 border border-white/10 text-white outline-none focus:border-indigo-500/60 focus:bg-black/60 transition-all placeholder:text-zinc-700 font-medium';
 
   return (
     <div className="min-h-screen flex items-center justify-center relative overflow-hidden px-5 py-8" style={{ background: '#020202' }}>
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full opacity-[0.08] blur-[120px]" style={{ background: '#f97316' }} />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full opacity-[0.08] blur-[120px]" style={{ background: '#f59e0b' }} />
+        <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] rounded-full opacity-[0.10] blur-[120px]" style={{ background: '#4f46e5' }} />
+        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] rounded-full opacity-[0.09] blur-[120px]" style={{ background: '#06b6d4' }} />
+        <div className="absolute top-[35%] right-[15%] w-[30%] h-[30%] rounded-full opacity-[0.04] blur-[100px]" style={{ background: '#8b5cf6' }} />
         <div className="absolute inset-0 opacity-[0.03]" style={{ backgroundImage: 'radial-gradient(#ffffff 1px, transparent 1px)', backgroundSize: '40px 40px' }} />
       </div>
 
       <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="relative w-full max-w-2xl">
-        <div className="backdrop-blur-3xl border rounded-[2rem] p-7 md:p-9" style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(255,255,255,0.08)', boxShadow: '0 40px 100px rgba(0,0,0,0.8)' }}>
+        <div className="backdrop-blur-3xl border rounded-[2rem] p-7 md:p-9" style={{ background: 'rgba(255,255,255,0.03)', borderColor: 'rgba(129,140,248,0.14)', boxShadow: '0 40px 100px rgba(0,0,0,0.8)' }}>
           <div className="flex items-center justify-between gap-4 mb-8">
             <Link to="/login" className="w-10 h-10 rounded-xl flex items-center justify-center text-zinc-400 hover:text-white transition-colors" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
               <ArrowLeft size={18} />
             </Link>
             <div className="text-center flex-1">
               <div className="flex items-center justify-center gap-2">
-                <GraduationCap size={28} className="text-orange-500" />
-                <h1 className="text-2xl md:text-3xl font-black text-white tracking-tight">Create Student Account</h1>
+                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg,#4f46e5,#06b6d4)', boxShadow: '0 10px 24px rgba(79,70,229,.24)' }}>
+                  <GraduationCap size={22} color="white" />
+                </div>
+                <div className="text-left">
+                  <p className="text-xs font-bold tracking-[0.16em] text-zinc-500 uppercase">CampusSphere</p>
+                  <h1 className="text-2xl md:text-3xl font-black text-white tracking-tight">Create Student Account</h1>
+                </div>
               </div>
               <p className="text-zinc-500 text-sm mt-2 flex items-center justify-center gap-2">
-                <Sparkles size={13} className="text-orange-400" />
-                Registration is available for students only
+                <Sparkles size={13} style={{ color: '#67e8f9' }} />
+                Smart academic profile starts here
               </p>
             </div>
             <div className="w-10" />
@@ -147,7 +153,7 @@ export default function RegisterPage() {
             </Field>
 
             <div className="md:col-span-2 pt-2">
-              <motion.button whileHover={{ scale: 1.01, y: -1 }} whileTap={{ scale: 0.99 }} type="submit" disabled={loading} className="w-full py-4 rounded-2xl text-white font-bold flex items-center justify-center gap-2 disabled:opacity-60" style={{ background: 'linear-gradient(135deg, #f97316, #f59e0b)', boxShadow: '0 20px 40px rgba(249,115,22,0.22)' }}>
+              <motion.button whileHover={{ scale: 1.01, y: -1 }} whileTap={{ scale: 0.99 }} type="submit" disabled={loading} className="w-full py-4 rounded-2xl text-white font-bold flex items-center justify-center gap-2 disabled:opacity-60" style={{ background: 'linear-gradient(135deg, #4f46e5, #0891b2)', boxShadow: '0 20px 40px rgba(79,70,229,0.22)' }}>
                 {loading ? <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <>Create Student Account <ArrowRight size={18} /></>}
               </motion.button>
             </div>
@@ -155,7 +161,7 @@ export default function RegisterPage() {
 
           <p className="text-center text-sm text-zinc-500 mt-6">
             Already registered?{' '}
-            <Link to="/login" className="text-orange-400 font-semibold hover:text-orange-300">Sign in</Link>
+            <Link to="/login" className="text-cyan-400 font-semibold hover:text-cyan-300">Sign in</Link>
           </p>
         </div>
       </motion.div>
@@ -168,7 +174,7 @@ function Field({ label, icon, children }) {
     <div className="space-y-2">
       <label className="text-xs font-bold text-zinc-500 uppercase tracking-widest ml-1">{label}</label>
       <div className="relative group">
-        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-600 group-focus-within:text-orange-500 transition-colors z-10">{icon}</span>
+        <span className="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-600 group-focus-within:text-indigo-400 transition-colors z-10">{icon}</span>
         {children}
       </div>
     </div>

@@ -9,15 +9,13 @@ export default function DashboardLayout({ title }) {
 
   return (
     <div className="app-shell">
-      {/* Ambient background orbs for premium feel */}
-      <div className="orb" style={{ width: 600, height: 600, background: 'radial-gradient(circle, #f97316 0%, transparent 70%)', top: '-15%', left: '5%', opacity: 0.08 }} />
-      <div className="orb" style={{ width: 500, height: 500, background: 'radial-gradient(circle, #f59e0b 0%, transparent 70%)', bottom: '5%', right: '5%', opacity: 0.05 }} />
-      <div className="orb" style={{ width: 400, height: 400, background: 'radial-gradient(circle, #06b6d4 0%, transparent 70%)', top: '40%', left: '40%', opacity: 0.03 }} />
+      {/* CampusSphere ambient brand glow */}
+      <div className="orb" style={{ width: 620, height: 620, background: 'radial-gradient(circle, #4f46e5 0%, transparent 70%)', top: '-18%', left: '3%', opacity: 0.1 }} />
+      <div className="orb" style={{ width: 520, height: 520, background: 'radial-gradient(circle, #06b6d4 0%, transparent 70%)', bottom: '2%', right: '3%', opacity: 0.07 }} />
+      <div className="orb" style={{ width: 420, height: 420, background: 'radial-gradient(circle, #8b5cf6 0%, transparent 70%)', top: '38%', left: '42%', opacity: 0.045 }} />
 
-      {/* Sidebar */}
       <Sidebar />
 
-      {/* Right column: TopNav + page */}
       <div className="content-column">
         <TopNav title={title} />
         <main className="page-area">
@@ -27,7 +25,7 @@ export default function DashboardLayout({ title }) {
                 <Link
                   to="/student/academics"
                   className="px-3 py-2 rounded-lg text-xs font-semibold"
-                  style={{ background: 'rgba(249,115,22,.12)', color: '#fdba74', border: '1px solid rgba(249,115,22,.28)', textDecoration: 'none' }}
+                  style={{ background: 'rgba(6,182,212,.10)', color: '#67e8f9', border: '1px solid rgba(6,182,212,.28)', textDecoration: 'none' }}
                 >
                   College Data · E-CAP
                 </Link>

@@ -19,7 +19,7 @@ import { LoadingSkeleton } from '../../components/shared/LoadingSkeleton';
 import { ErrorState } from '../../components/shared/ErrorState';
 import { getDaysUntil, getGradeColor, calculatePlacementIndex } from '../../utils/helpers';
 import { useAuth } from '../../context/AuthContext';
-import { collection, getDocs, doc, getDoc, query, where } from 'firebase/firestore';
+import { collection, getDocs, doc, getDoc } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 
 const BRAND = {
@@ -250,9 +250,8 @@ export default function StudentDashboard() {
           }
         };
 
-        const [studentJson, statsJson, lc, gfg, cc, hr] = await Promise.all([
+        const [studentJson, lc, gfg, cc, hr] = await Promise.all([
           fetchStudentDetails(),
-          safeFetch('/api/get-student-problems-count-dashboard'),
           safeFetch('/api/get-leetcode-details-by-rollno'),
           safeFetch('/api/get-geeksforgeeks-details-by-rollno'),
           safeFetch('/api/get-codechef-details-by-rollno'),
@@ -293,37 +292,38 @@ export default function StudentDashboard() {
           };
         }
 
-        const seed = rollNo.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-        const finalStats = statsJson || {
-          total: 120 + (seed % 300),
-          easy: 60 + (seed % 100),
-          medium: 40 + (seed % 150),
-          hard: 20 + (seed % 50),
-          rank: 1200 + (seed % 5000),
-          score: 1500 + (seed % 2000),
-        };
+        // Load optional exam data independently so an empty/missing collection
+        // does not prevent the core student dashboard from rendering.
+        try {
+          const examsSnap = await getDocs(collection(db, 'exams'));
+          const examsData = examsSnap.docs
+            .map((item) => ({ id: item.id, ...item.data() }))
+            .filter((item) => item.status === 'upcoming' || item.status === 'scheduled')
+            .sort((a, b) => new Date(a.date) - new Date(b.date));
+          setUpcomingExams(examsData.slice(0, 3));
+        } catch (examsError) {
+          console.warn('Could not load upcoming exams:', examsError);
+          setUpcomingExams([]);
+        }
 
-        const examsSnap = await getDocs(collection(db, 'exams'));
-        const examsData = examsSnap.docs
-          .map((item) => ({ id: item.id, ...item.data() }))
-          .filter((item) => item.status === 'upcoming' || item.status === 'scheduled')
-          .sort((a, b) => new Date(a.date) - new Date(b.date));
-        setUpcomingExams(examsData.slice(0, 3));
+        // The Firestore "results" collection has not been created/populated yet.
+        // Do not query it: its studentId/uid security rule cannot be satisfied
+        // by a rollNo-only query, and no published result data is available.
+        setMyResults([]);
 
-        const resultsQuery = query(collection(db, 'results'), where('rollNo', '==', rollNo));
-        const resultsSnap = await getDocs(resultsQuery);
-        const userResults = resultsSnap.docs.map((item) => item.data());
-        setMyResults(userResults);
+        // Keep only real coding-profile API responses; never fabricate metrics.
+        const nonEmpty = (value) =>
+          value && typeof value === 'object' && Object.keys(value).length > 0 ? value : null;
 
         setCodingProfiles({
-          leetcode: lc || { lc_total_progarms: finalStats.total * 0.4, lc_easy: finalStats.easy * 0.4, lc_rank: finalStats.rank },
-          gfg: gfg || { gfg_total_problems: finalStats.total * 0.3, gfg_score: finalStats.score * 0.3 },
-          codechef: cc || { total_problems: finalStats.total * 0.2, rating: 1400 + (seed % 400) },
-          hackerrank: hr || { hr_badges: 3, hr_total_stars: 12 },
+          leetcode: nonEmpty(lc),
+          gfg: nonEmpty(gfg),
+          codechef: nonEmpty(cc),
+          hackerrank: nonEmpty(hr),
         });
 
         setStudentData(finalStudentData);
-        setDashboardStats(finalStats);
+        setDashboardStats(null);
       } catch (err) {
         console.error('Error fetching dashboard data', err);
         setError(true);
@@ -421,8 +421,8 @@ export default function StudentDashboard() {
       </motion.div>
 
       <div className="stat-grid">
-        <StatCard title="Total Problems" value={dashboardStats?.total || 0} subtitle="Across all platforms" icon={Code} color={BRAND.indigo} trend="up" trendValue={`${dashboardStats?.easy || 0} Easy`} delay={0} />
-        <StatCard title="Coding Rank" value={dashboardStats?.rank ? `#${dashboardStats.rank}` : 'N/A'} subtitle="Global Rank" icon={Trophy} color={BRAND.cyan} trend="up" trendValue={`${dashboardStats?.score || 0} pts`} delay={0.08} />
+        <StatCard title="Total Problems" value={dashboardStats?.total ?? 'N/A'} subtitle="Across all platforms" icon={Code} color={BRAND.indigo} trend="none" trendValue={dashboardStats?.easy != null ? `${dashboardStats.easy} Easy` : 'Live data unavailable'} delay={0} />
+        <StatCard title="Coding Rank" value={dashboardStats?.rank ? `#${dashboardStats.rank}` : 'N/A'} subtitle="Global Rank" icon={Trophy} color={BRAND.cyan} trend="none" trendValue={dashboardStats?.score != null ? `${dashboardStats.score} pts` : 'Live data unavailable'} delay={0.08} />
         <StatCard title="PI Score" value={`${placementIndex}/100`} subtitle="Placement Index" icon={Award} color={BRAND.green} trend={placementIndex >= 80 ? 'up' : placementIndex >= 65 ? 'none' : 'down'} trendValue={placementIndex >= 80 ? 'Excellent' : placementIndex >= 65 ? 'Good' : 'Needs work'} delay={0.12} />
         <StatCard title="Active Courses" value={studentData?.current_courses?.length || 0} subtitle="Currently Enrolled" icon={BookOpen} color={BRAND.violet} trend="none" trendValue="" delay={0.16} />
         <StatCard

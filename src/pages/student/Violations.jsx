@@ -8,16 +8,18 @@ import { collection, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import { getSeverityClass, getStatusClass, formatDate } from '../../utils/helpers';
 export default function ViolationsPage() {
-  const { user } = useAuth();
+  const { user, studentData } = useAuth();
   const uid = user?.uid || '';
+  const rollNo = (studentData?.roll_no || user?.roll_no || user?.rollNo || user?.email?.split('@')[0] || '').trim().toUpperCase();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const [violations, setViolations] = useState([]);
 
   useEffect(() => {
-    if (!uid) {
+    if (!uid || !rollNo) {
       setLoading(false);
+      setError(true);
       return;
     }
 
@@ -26,17 +28,13 @@ export default function ViolationsPage() {
       setLoading(true);
       setError(false);
       try {
-        // Fetch only records tied to the authenticated Firebase UID.
-        const identityFields = ['studentUid', 'uid', 'studentId'];
-        const snapshots = await Promise.all(
-          identityFields.map((field) =>
-            getDocs(query(collection(db, 'violations'), where(field, '==', uid)))
-          )
+        // Existing violation documents use "rollNumber" (not UID fields).
+        // Security rules verify that this roll number belongs to the signed-in UID.
+        const snapshot = await getDocs(
+          query(collection(db, 'violations'), where('rollNumber', '==', rollNo))
         );
 
-        const records = snapshots.flatMap((snap) =>
-          snap.docs.map((item) => ({ id: item.id, ...item.data() }))
-        );
+        const records = snapshot.docs.map((item) => ({ id: item.id, ...item.data() }));
         const merged = records
           .filter((item, index, all) => all.findIndex((record) => record.id === item.id) === index)
           .sort((a, b) => {
@@ -56,7 +54,7 @@ export default function ViolationsPage() {
 
     fetchViolations();
     return () => { cancelled = true; };
-  }, [uid, retryCount]);
+  }, [uid, rollNo, retryCount]);
 
     const handleRetry = () => {
     setLoading(true);

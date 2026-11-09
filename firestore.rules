@@ -40,6 +40,20 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Students can read only violation records explicitly linked to their
+    // authenticated Firebase UID. Admins can review all records.
+    match /violations/{violationId} {
+      allow read: if isAdmin() || (
+        isSignedIn()
+        && (
+          resource.data.studentUid == request.auth.uid
+          || resource.data.uid == request.auth.uid
+          || resource.data.studentId == request.auth.uid
+        )
+      );
+      allow create, update, delete: if isAdmin();
+    }
+
     match /results/{resultId} {
       allow read: if isAdmin() || (
         isSignedIn()

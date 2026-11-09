@@ -9,39 +9,56 @@ import { db } from '../../firebase/firebase';
 import { getSeverityClass, getStatusClass, formatDate } from '../../utils/helpers';
 export default function ViolationsPage() {
   const { user } = useAuth();
-  const rollNo = user?.email ? user.email.split('@')[0].toUpperCase() : '';
+  const uid = user?.uid || '';
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   const [violations, setViolations] = useState([]);
 
   useEffect(() => {
-    if (!rollNo) return;
+    if (!uid) {
+      setLoading(false);
+      return;
+    }
+
+    let cancelled = false;
     const fetchViolations = async () => {
+      setLoading(true);
+      setError(false);
       try {
-        setError(false);
-        const q1 = query(collection(db, 'violations'), where('studentName', '==', rollNo));
-        const snap1 = await getDocs(q1);
-        const list1 = snap1.docs.map(d => ({ id: d.id, ...d.data() }));
-        
-        const q2 = query(collection(db, 'violations'), where('rollNumber', '==', rollNo));
-        const snap2 = await getDocs(q2);
-        const list2 = snap2.docs.map(d => ({ id: d.id, ...d.data() }));
-        
-        const merged = [...list1, ...list2].filter((v, i, a) => a.findIndex(t => t.id === v.id) === i);
-        merged.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
-        setViolations(merged);
+        // Fetch only records tied to the authenticated Firebase UID.
+        const identityFields = ['studentUid', 'uid', 'studentId'];
+        const snapshots = await Promise.all(
+          identityFields.map((field) =>
+            getDocs(query(collection(db, 'violations'), where(field, '==', uid)))
+          )
+        );
+
+        const records = snapshots.flatMap((snap) =>
+          snap.docs.map((item) => ({ id: item.id, ...item.data() }))
+        );
+        const merged = records
+          .filter((item, index, all) => all.findIndex((record) => record.id === item.id) === index)
+          .sort((a, b) => {
+            const dateA = a.date?.toDate ? a.date.toDate() : new Date(a.date || 0);
+            const dateB = b.date?.toDate ? b.date.toDate() : new Date(b.date || 0);
+            return dateB - dateA;
+          });
+
+        if (!cancelled) setViolations(merged);
       } catch (err) {
-        console.error("Error fetching violations:", err);
-        setError(true);
+        console.error('Error fetching violations:', err);
+        if (!cancelled) setError(true);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
-    fetchViolations();
-  }, [rollNo, retryCount]);
 
-  const handleRetry = () => {
+    fetchViolations();
+    return () => { cancelled = true; };
+  }, [uid, retryCount]);
+
+    const handleRetry = () => {
     setLoading(true);
     setError(false);
     setRetryCount(c => c + 1);

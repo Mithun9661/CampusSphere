@@ -40,16 +40,13 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Students can read only violation records explicitly linked to their
-    // authenticated Firebase UID. Admins can review all records.
+    // Legacy violation documents are keyed by rollNumber. Verify ownership
+    // against the student's protected profile before allowing a read.
     match /violations/{violationId} {
       allow read: if isAdmin() || (
         isSignedIn()
-        && (
-          resource.data.studentUid == request.auth.uid
-          || resource.data.uid == request.auth.uid
-          || resource.data.studentId == request.auth.uid
-        )
+        && resource.data.rollNumber is string
+        && get(/databases/$(database)/documents/students/$(resource.data.rollNumber)).data.uid == request.auth.uid
       );
       allow create, update, delete: if isAdmin();
     }
